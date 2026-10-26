@@ -20,7 +20,7 @@ services:
     container_name: rapidbay
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "3000:5000"
       - "6881:6881"
       - "6881:6881/udp"
     volumes:
