@@ -12,3 +12,16 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  rapidbay:
+    image: hauxir/rapidbay:latest
+    container_name: rapidbay
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      PASSWORD: ${RAPIDBAY_PASSWORD:?Set RAPIDBAY_PASSWORD in .env}
+      JACKETT_HOST: ${JACKETT_HOST:-}
+      JACKETT_API_KEY: ${JACKETT_API_KEY:-}
+      PROWLARR_HOST: ${PROWLARR_HOST:-}
+      PROWLARR_API_KEY: ${PROWLARR_API_KEY:-}
