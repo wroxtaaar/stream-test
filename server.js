@@ -1,7 +1,7 @@
 import http from "node:http";
 import { URL } from "node:url";
 
-const PORT = Number(process.env.PORT || 10081);
+const PORT = Number(process.env.PORT || 3000);
 const API_ORIGIN = "https://vidsrc.ir";
 const EMBED_ORIGIN = "https://vidsrc.ir";
 
@@ -27,7 +27,17 @@ h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.04em;margin:8px 0}h2,h3{margi
 <p>Test VidSrc movie and TV embeds independently from Torrent Studio. Check title availability metadata and load the provider-hosted player.</p>
 <div><span class="tag">No API key documented</span><span class="tag">Movies + TV episodes</span><span class="tag">Embed-first integration</span></div>
 <section class="panel">
-<h2>1. Select a title</h2>
+<h2>1. Search by title</h2>
+<div class="fields">
+<div><label for="searchKind">Search type</label><select id="searchKind"><option value="movie">Movies</option><option value="series">TV series</option></select></div>
+<div class="wide"><label for="searchQuery">Title name</label><input id="searchQuery" placeholder="e.g. Fight Club or Game of Thrones"></div>
+</div>
+<div class="actions"><button id="searchButton">Search</button></div>
+<div id="searchStatus" class="status">Search for a title, then choose a result.</div>
+<div id="searchResults" class="fields"></div>
+</section>
+<section class="panel">
+<h2>2. Selected title</h2>
 <div class="fields">
 <div><label for="kind">Content type</label><select id="kind"><option value="movie">Movie</option><option value="tv">TV episode</option></select></div>
 <div><label for="id">TMDB ID</label><input id="id" value="550" inputmode="numeric" placeholder="e.g. 550"></div>
@@ -40,7 +50,7 @@ h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.04em;margin:8px 0}h2,h3{margi
 <div id="status" class="status" role="status">Ready. Test a title ID you are authorized to access.</div>
 </section>
 <div class="layout">
-<section class="panel"><h2>2. VidSrc embed player</h2><iframe id="embed" title="VidSrc embed preview" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe><p class="muted">Playback is hosted by VidSrc. This integration uses the documented embed player; it does not claim to extract direct HLS URLs.</p><div id="embedUrl" class="url">No embed loaded.</div></section>
+<section class="panel"><h2>3. VidSrc embed player</h2><iframe id="embed" title="VidSrc embed preview" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe><p class="muted">Playback is hosted by VidSrc. This integration uses the documented embed player; it does not claim to extract direct HLS URLs.</p><div id="embedUrl" class="url">No embed loaded.</div></section>
 <section class="panel"><h2>3. Availability result</h2><p class="muted">VidSrc content-info endpoint reports whether a title is listed and may return quality and embed metadata. A successful metadata response does not guarantee playback.</p><div id="streamUrl" class="url">No availability check yet.</div></section>
 
 <section class="panel"><h2>Last resolve response</h2><pre id="raw">No resolve request yet.</pre></section>
@@ -53,6 +63,8 @@ let hls=null;
 const status=s=>$('status').textContent=s;
 const json=(value)=>JSON.stringify(value,null,2);
 async function readResponse(r){const raw=await r.text();try{return {data:JSON.parse(raw),raw}}catch{return {data:{nonJsonResponse:raw},raw}}}
+$('searchButton').onclick=async()=>{const q=$('searchQuery').value.trim(),type=$('searchKind').value;if(!q){$('searchStatus').textContent='Enter a title first.';return}const b=$('searchButton');b.disabled=true;$('searchStatus').textContent='Searching…';$('searchResults').replaceChildren();try{const r=await fetch('/api/search?type='+encodeURIComponent(type)+'&q='+encodeURIComponent(q));const p=await readResponse(r);if(!r.ok)throw new Error(p.data.error||('HTTP '+r.status));const metas=p.data.metas||[];if(!metas.length){$('searchStatus').textContent='No results. Try another title or search type.';return}$('searchStatus').textContent='Found '+metas.length+' results. Select one.';for(const m of metas){const card=document.createElement('button');card.type='button';card.className='secondary';card.style.textAlign='left';card.style.whiteSpace='normal';card.textContent=(m.name||m.title||'Untitled')+(m.releaseInfo?' ('+m.releaseInfo+')':'')+' — '+(m.type||type)+' — '+m.id;card.onclick=()=>{const k=(m.type==='series'||type==='series')?'tv':'movie';$('kind').value=k;$('id').value=m.id;$('kind').dispatchEvent(new Event('change'));$('searchStatus').textContent='Selected '+(m.name||m.title||m.id)+'. Now click Load embed player.'};$('searchResults').appendChild(card)}}catch(e){$('searchStatus').textContent='Search failed: '+e.message}finally{b.disabled=false}};
+
 function stopVideo(){if(hls){hls.destroy();hls=null}const v=$('video');if(v){v.pause();v.removeAttribute('src');v.load()}}
 function setEmbed(){
  const id=$('id').value.trim(),kind=$('kind').value,s=$('season').value.trim(),ep=$('episode').value.trim();
@@ -98,6 +110,20 @@ async function requestProvider(path) {
 const server = http.createServer(async (req, res) => {
   const base = new URL(req.url || "/", `http://localhost:${PORT}`);
   if (base.pathname === "/health") return send(res, 200, "application/json; charset=utf-8", JSON.stringify({ status: "ok", provider: "vidsrc", apiOrigin: API_ORIGIN }));
+  if (base.pathname === "/api/search") {
+    const q = (base.searchParams.get("q") || "").trim();
+    const type = base.searchParams.get("type") === "series" ? "series" : "movie";
+    if (!q || q.length > 100) return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Enter a title (maximum 100 characters)." }));
+    try {
+      const catalogType = type === "series" ? "tv" : "movie";
+      const url = `https://v3-cinemeta.strem.io/catalog/${catalogType}/top/search=${encodeURIComponent(q)}.json`;
+      const upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(12000) });
+      const body = await upstream.text();
+      return send(res, upstream.status, upstream.headers.get("content-type") || "application/json; charset=utf-8", body);
+    } catch (e) {
+      return send(res, 502, "application/json; charset=utf-8", JSON.stringify({ error: "Title search failed", detail: e instanceof Error ? e.message : String(e) }));
+    }
+  }
   if (base.pathname === "/") return send(res, 200, "text/html; charset=utf-8", html);
   if (base.pathname === "/api/list" || base.pathname === "/api/resolve") {
     let path;
