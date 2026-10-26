@@ -63,7 +63,7 @@ a{color:#bdc8ff}
 <section class="panel">
 <h2>3. Generated embed URL</h2>
 <div id="url" class="url">No URL generated yet.</div>
-<p class="muted">SUB uses Yenime's documented URL pattern. DUB adds <code>dub=true</code> as an experimental parameter; Yenime's published parameter list doesn't document that flag, so the result must be verified.</p>
+<p class="muted">SUB uses the observed public integration URL pattern. DUB adds <code>dub=true</code> as an experimental parameter; Yenime's published parameter list doesn't document that flag, so the result must be verified.</p>
 <h2 style="margin-top:22px">Test notes</h2>
 <p class="muted">An iframe loading successfully does not guarantee that a playable source exists. Record whether the player loads, whether playback starts, and whether the selected audio language works.</p>
 </section>
