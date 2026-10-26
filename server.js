@@ -4,56 +4,33 @@ import { URL } from "node:url";
 const PORT = Number(process.env.PORT || 3000);
 const html = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stream Test Lab — VidSrc.sh</title>
+<title>Stream Test Lab — Stremio Add-on Explorer</title>
 <style>
-:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#090d18;color:#eef2ff}*{box-sizing:border-box}
-body{margin:0;background:radial-gradient(ellipse at 10% 0,#1b2850 0,transparent 42%),#090d18}
-main{max-width:1100px;margin:auto;padding:28px 18px 60px}h1{font-size:clamp(30px,5vw,46px);margin:8px 0}p{color:#aeb9d2;line-height:1.55}
-.panel{border:1px solid #283451;background:#11192b;border-radius:16px;padding:20px;margin-top:16px}
-.fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}label{display:block;font-size:12px;color:#b7c2dc;margin-bottom:7px}
-input,select,button{font:inherit;border-radius:9px;padding:12px;border:1px solid #344264;background:#0a1120;color:#eef2ff;width:100%}
-button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}.secondary{background:#202b45;color:#e2e8ff;border:1px solid #344264}
-.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}.actions button{width:auto}.status{margin-top:12px;overflow-wrap:anywhere;color:#c4d0eb}
-.layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:12px;background:#050812}
-.url,pre{font:12px ui-monospace,monospace;overflow-wrap:anywhere;white-space:pre-wrap;background:#090f1c;padding:12px;border-radius:9px;color:#dbe4ff}
-.tag{display:inline-block;border:1px solid #344264;border-radius:999px;padding:5px 10px;font-size:12px;color:#c5d0ee;margin:4px 5px 4px 0}
-@media(max-width:720px){.fields,.layout{grid-template-columns:1fr 1fr}}@media(max-width:480px){.fields,.layout{grid-template-columns:1fr}}
+:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#090d18;color:#eef2ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 10% 0,#1b2850 0,transparent 42%),#090d18}main{max-width:1100px;margin:auto;padding:28px 18px 60px}h1{font-size:clamp(30px,5vw,46px);margin:8px 0}p{color:#aeb9d2;line-height:1.55}.panel{border:1px solid #283451;background:#11192b;border-radius:16px;padding:20px;margin-top:16px}.fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}label{display:block;font-size:12px;color:#b7c2dc;margin-bottom:7px}input,select,button{font:inherit;border-radius:9px;padding:12px;border:1px solid #344264;background:#0a1120;color:#eef2ff;width:100%}button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}.secondary{background:#202b45;color:#e2e8ff;border:1px solid #344264}.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}.actions button{width:auto}.status{margin-top:12px;overflow-wrap:anywhere;color:#c4d0eb}.layout{display:grid;grid-template-columns:1fr 1fr;gap:16px}.result{border:1px solid #344264;border-radius:10px;padding:12px;margin-top:10px;background:#0a1120;overflow-wrap:anywhere}.muted{font-size:12px;color:#aeb9d2}.tag{display:inline-block;border:1px solid #344264;border-radius:999px;padding:5px 10px;font-size:12px;color:#c5d0ee;margin:4px 5px 4px 0}@media(max-width:720px){.fields,.layout{grid-template-columns:1fr 1fr}}@media(max-width:480px){.fields,.layout{grid-template-columns:1fr}}
 </style></head><body><main>
-<div style="color:#a8b7ff;text-transform:uppercase;letter-spacing:.16em;font-size:11px;font-weight:800">Stream Test Lab / Provider</div>
-<h1>VidSrc.sh test bench</h1><p>Isolated test harness for VidSrc.sh movie and TV embeds. Test playback and audio/subtitle options here before considering any integration into another project.</p>
-<div><span class="tag">Movie + TV</span><span class="tag">TMDB / IMDb ID</span><span class="tag">No API key configured</span></div>
-<section class="panel"><h2>1. Search for a title</h2><div class="fields">
-<div><label for="searchKind">Search type</label><select id="searchKind"><option value="movie">Movies</option><option value="series">TV series</option></select></div>
-<div style="grid-column:span 2"><label for="searchQuery">Title</label><input id="searchQuery" placeholder="e.g. Breaking Bad or Avengers: Endgame"></div>
-<div><label>&nbsp;</label><button id="searchButton">Search titles</button></div>
-</div><div id="searchStatus" class="status">Search by name, then select a result to fill in its ID.</div><div id="searchResults" class="fields"></div></section>
-<section class="panel"><h2>2. Configure test</h2><div class="fields">
-<div><label for="kind">Content type</label><select id="kind"><option value="movie">Movie</option><option value="tv">TV episode</option></select></div>
-<div><label for="id">TMDB or IMDb ID</label><input id="id" value="299534" placeholder="e.g. 299534 or tt1234567"></div>
-<div id="seasonWrap" hidden><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
-<div id="episodeWrap" hidden><label for="episode">Episode</label><input id="episode" type="number" min="1" value="1"></div>
-<div><label for="autoplay">Autoplay</label><select id="autoplay"><option value="0">Off</option><option value="1">On</option></select></div>
-<div><label for="autonext">Auto-next (TV)</label><select id="autonext"><option value="0">Off</option><option value="1">On</option></select></div>
-<div><label for="subtitles">Default subtitles (not audio)</label><select id="subtitles"><option value="">Provider default</option><option value="en">English subtitles</option><option value="hi">Hindi subtitles</option><option value="es">Spanish subtitles</option></select></div>
-</div><div class="actions"><button id="load">Load player</button><button class="secondary" id="open">Open embed in new tab</button><button class="secondary" id="clear">Clear</button></div>
-<div id="status" class="status" role="status">Search for a title above or enter an ID manually. Preset: Avengers: Endgame (299534).</div></section>
-<div class="layout"><section class="panel"><h2>Player</h2><iframe id="player" title="VidSrc.sh player" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe><p><strong>Audio language:</strong> open the player's settings/gear menu and look for Audio or Audio track. This app's language dropdown only requests subtitles. If Hindi is not listed in the player itself, this embed does not expose a documented way to force Hindi audio for that title.</p></section>
-<section class="panel"><h2>Generated URL</h2><div id="url" class="url">No URL generated yet.</div><h3>Test checklist</h3><ul><li>Does playback start?</li><li>Open the player's gear/settings menu and check whether Audio tracks lists Hindi.</li><li>Subtitles are separate; test them with the CC button.</li><li>Does TV episode navigation work?</li><li>Does the same title work in a new tab and iframe?</li></ul></section></div>
-<section class="panel"><h3>Known limitations</h3><p>This harness only constructs the documented embed URL and loads the provider-hosted player. A successful HTTP response does not guarantee a playable stream. Test only content you are authorized to access; third-party embeds may include ads and can change without notice.</p></section>
+<div style="color:#a8b7ff;text-transform:uppercase;letter-spacing:.16em;font-size:11px;font-weight:800">Stream Test Lab / Ecosystem</div>
+<h1>Stremio Add-on Explorer</h1><p>Search a movie or series, inspect an add-on manifest, then query its stream endpoint. This tests the Stremio add-on protocol—not a single embed host.</p>
+<div><span class="tag">Title search</span><span class="tag">Manifest inspection</span><span class="tag">Movie + series</span><span class="tag">Audio/subtitle metadata</span></div>
+<section class="panel"><h2>1. Search title</h2><div class="fields">
+<div><label for="kind">Content type</label><select id="kind"><option value="movie">Movie</option><option value="series">TV series</option></select></div>
+<div><label for="query">Title</label><input id="query" placeholder="e.g. Breaking Bad"></div>
+<div><label>&nbsp;</label><button id="search">Search titles</button></div></div><div id="searchStatus" class="status">Search and choose a result to populate its IMDb ID.</div><div id="results"></div></section>
+<section class="panel"><h2>2. Add-on endpoint</h2><p>Paste the base URL of a Stremio add-on you are authorized to test. Use its base URL, not the /manifest.json path.</p><div class="fields">
+<div style="grid-column:span 2"><label for="addon">Add-on base URL</label><input id="addon" placeholder="https://your-addon.example"></div>
+<div><label for="id">IMDb ID</label><input id="id" placeholder="tt0903747"></div>
+<div><label for="season">Season (series)</label><input id="season" type="number" min="1" value="1"></div>
+<div><label for="episode">Episode (series)</label><input id="episode" type="number" min="1" value="1"></div>
+<div><label>&nbsp;</label><button id="inspect">Inspect add-on</button></div></div><div class="actions"><button id="streams">Find streams</button><button class="secondary" id="clear">Clear results</button></div><div id="addonStatus" class="status">Choose a title and enter an add-on endpoint to begin.</div></section>
+<div class="layout"><section class="panel"><h2>Manifest</h2><div id="manifest" class="muted">No manifest inspected.</div></section><section class="panel"><h2>Stream results</h2><div id="streamResults" class="muted">No stream query yet.</div></section></div>
+<section class="panel"><h3>Notes</h3><p>Many add-ons do not allow browser cross-origin requests (CORS), so an endpoint may work in Stremio but fail in this browser-based tester. The tool reports that distinction where possible. Stream availability and audio languages depend on the add-on's actual results; a subtitle language setting does not create an audio track.</p><p>Use add-ons and streams only where you have the right to access the content.</p></section>
 </main><script>
-const $=id=>document.getElementById(id);let currentUrl="";
-async function searchTitles(){const q=$("searchQuery").value.trim();if(!q){$("searchStatus").textContent="Enter a title to search.";return;}const kind=$("searchKind").value;$("searchStatus").textContent="Searching titles…";$("searchResults").replaceChildren();try{const r=await fetch("/api/search?q="+encodeURIComponent(q)+"&type="+encodeURIComponent(kind));const data=await r.json();if(!r.ok)throw new Error(data.error||"Search failed");if(!data.results?.length){$("searchStatus").textContent="No results found. Try another title or enter an ID manually.";return;}$("searchStatus").textContent="Choose a result to fill in the ID and content type.";for(const item of data.results){const card=document.createElement("div");card.style.cssText="border:1px solid #344264;border-radius:10px;padding:12px;background:#0a1120";const title=document.createElement("strong");title.textContent=item.name||item.id;const meta=document.createElement("p");meta.style.cssText="font-size:12px;margin:6px 0";meta.textContent=[item.year,item.id].filter(Boolean).join(" · ");const btn=document.createElement("button");btn.textContent="Use this title";btn.addEventListener("click",()=>{$("kind").value=kind==="movie"?"movie":"tv";$("id").value=item.id;sync();$("status").textContent="Selected "+(item.name||item.id)+". If the provider expects a different ID type, try its TMDB ID manually.";window.scrollTo({top:$("id").getBoundingClientRect().top+window.scrollY-100,behavior:"smooth"});});card.append(title,meta,btn);$("searchResults").append(card);}}catch(e){$("searchStatus").textContent="Search unavailable: "+e.message;}}
-$("searchButton").addEventListener("click",searchTitles);$("searchQuery").addEventListener("keydown",e=>{if(e.key==="Enter")searchTitles();});
-function sync(){const tv=$("kind").value==="tv";$("seasonWrap").hidden=!tv;$("episodeWrap").hidden=!tv;}
-function build(){const kind=$("kind").value,id=$("id").value.trim();if(!id)throw new Error("Enter a TMDB or IMDb ID.");
-if(!/^(tt\d{7,}|\d+)$/.test(id))throw new Error("Use a numeric TMDB ID or IMDb ID starting with tt.");
-let path=kind==="movie"?"/embed/movie/"+encodeURIComponent(id):"/embed/tv/"+encodeURIComponent(id)+"/"+Math.max(1,Number($("season").value)||1)+"/"+Math.max(1,Number($("episode").value)||1);
-const q=new URLSearchParams();q.set("autoplay",$("autoplay").value);if(kind==="tv")q.set("autonext",$("autonext").value);if($("subtitles").value)q.set("ds_lang",$("subtitles").value);
-return "https://vidsrc.sh"+path+"?"+q.toString();}
-$("kind").addEventListener("change",sync);sync();
-$("load").addEventListener("click",()=>{try{currentUrl=build();$("player").src=currentUrl;$("url").textContent=currentUrl;$("status").textContent="Embed loaded. Check playback and available audio tracks manually.";}catch(e){$("status").textContent=e.message;}});
-$("open").addEventListener("click",()=>{try{currentUrl=build();$("url").textContent=currentUrl;window.open(currentUrl,"_blank","noopener");}catch(e){$("status").textContent=e.message;}});
-$("clear").addEventListener("click",()=>{$("player").src="about:blank";$("url").textContent="No URL generated yet.";$("status").textContent="Player cleared.";currentUrl="";});
+const $=id=>document.getElementById(id);let selectedType="movie";let manifestData=null;
+function showError(where,e){$(where).textContent="Request failed: "+(e&&e.message?e.message:String(e))+". If this is a CORS error, test the add-on inside Stremio or use an endpoint that explicitly supports browser CORS.";}
+async function searchTitles(){const q=$("query").value.trim();if(!q){$("searchStatus").textContent="Enter a title first.";return;}selectedType=$("kind").value;$("searchStatus").textContent="Searching…";$("results").replaceChildren();try{const r=await fetch("/api/search?q="+encodeURIComponent(q)+"&type="+encodeURIComponent(selectedType));const d=await r.json();if(!r.ok)throw Error(d.error||"Search failed");if(!d.results.length){$("searchStatus").textContent="No results found.";return;}$("searchStatus").textContent="Select a result to fill the IMDb ID.";for(const item of d.results){const card=document.createElement("div");card.className="result";const title=document.createElement("strong");title.textContent=item.name;const meta=document.createElement("p");meta.className="muted";meta.textContent=[item.year,item.id].filter(Boolean).join(" · ");const btn=document.createElement("button");btn.textContent="Use this title";btn.addEventListener("click",()=>{$("id").value=item.id;$("addonStatus").textContent="Selected "+item.name+" ("+item.id+").";});card.append(title,meta,btn);$("results").append(card);}}catch(e){showError("searchStatus",e);}}
+function base(){let raw=$("addon").value.trim();if(!raw)throw Error("Enter an add-on base URL");let u=new URL(raw);if(!["https:","http:"].includes(u.protocol))throw Error("Use an HTTP(S) URL");return u.href.replace(/\/$/,"");}
+async function inspect(){try{const root=base();$("addonStatus").textContent="Requesting manifest…";const r=await fetch(root+"/manifest.json");if(!r.ok)throw Error("Manifest returned HTTP "+r.status);manifestData=await r.json();$("manifest").replaceChildren();for(const [k,v] of Object.entries({Name:manifestData.name,Description:manifestData.description,Version:manifestData.version,ID:manifestData.id,Resources:(manifestData.resources||[]).map(x=>typeof x==="string"?x:x.name).join(", "),Types:(manifestData.types||[]).join(", ")})){const row=document.createElement("p");const b=document.createElement("strong");b.textContent=k+": ";row.append(b,document.createTextNode(v||"—"));$("manifest").append(row);} $("addonStatus").textContent="Manifest loaded. Now query streams for the selected title."; }catch(e){showError("addonStatus",e);}}
+async function getStreams(){try{const root=base();const id=$("id").value.trim();if(!id)throw Error("Search and select a title or enter an IMDb ID");if(!/^tt\d{7,}$/.test(id))throw Error("This tester expects an IMDb ID beginning with tt");const type=$("kind").value;let videoId=id;if(type==="series")videoId=id+":"+Math.max(1,Number($("season").value)||1)+":"+Math.max(1,Number($("episode").value)||1);$("addonStatus").textContent="Requesting stream list…";$("streamResults").replaceChildren();const r=await fetch(root+"/stream/"+type+"/"+encodeURIComponent(videoId)+".json");if(!r.ok)throw Error("Stream endpoint returned HTTP "+r.status);const d=await r.json();const streams=d.streams||[];if(!streams.length){$("streamResults").textContent="The add-on returned no streams for this ID/episode.";}$("addonStatus").textContent="Received "+streams.length+" stream(s).";for(const s of streams){const card=document.createElement("div");card.className="result";const title=document.createElement("strong");title.textContent=s.name||s.title||"Stream";const desc=document.createElement("p");desc.className="muted";desc.textContent=s.description||[s.behaviorHints&&s.behaviorHints.filename,s.type].filter(Boolean).join(" · ")||"No additional details";card.append(title,desc);if(s.url){const a=document.createElement("a");a.href=s.url;a.target="_blank";a.rel="noopener noreferrer";a.textContent="Open HTTP stream";a.style.color="#a8b7ff";card.append(a);}if(s.infoHash){const p=document.createElement("p");p.className="muted";p.textContent="Torrent info hash: "+s.infoHash+(s.fileIdx!==undefined?" · file "+s.fileIdx:"");card.append(p);} $("streamResults").append(card);}}catch(e){showError("addonStatus",e);}}
+$("search").addEventListener("click",searchTitles);$("query").addEventListener("keydown",e=>{if(e.key==="Enter")searchTitles();});$("inspect").addEventListener("click",inspect);$("streams").addEventListener("click",getStreams);$("clear").addEventListener("click",()=>{$("manifest").textContent="No manifest inspected.";$("streamResults").textContent="No stream query yet.";$("addonStatus").textContent="Results cleared.";manifestData=null;});
 </script></body></html>`;
 
 const server = http.createServer(async (req, res) => {
@@ -61,35 +38,18 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/search") {
     const q = (url.searchParams.get("q") || "").trim();
     const type = url.searchParams.get("type") === "series" ? "series" : "movie";
-    if (!q) {
-      res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ error: "Missing search query" }));
-      return;
-    }
+    if (!q) { res.writeHead(400, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "Missing search query" })); return; }
     try {
-      const upstream = await fetch("https://v3-cinemeta.strem.io/catalog/" + type + "/top/search=" + encodeURIComponent(q) + ".json", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(8000) });
+      const upstream = await fetch("https://v3-cinemeta.strem.io/catalog/" + type + "/top/search=" + encodeURIComponent(q) + ".json", { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
       if (!upstream.ok) throw new Error("Metadata catalog returned HTTP " + upstream.status);
       const data = await upstream.json();
       const results = (data.metas || []).slice(0, 12).map(item => ({ id: item.imdb_id || item.id, name: item.name, year: item.releaseInfo || item.year || "" })).filter(item => item.id);
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-      res.end(JSON.stringify({ results }));
-    } catch (error) {
-      res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ error: "Title search failed: " + error.message }));
-    }
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }); res.end(JSON.stringify({ results }));
+    } catch (error) { res.writeHead(502, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "Title search failed: " + error.message })); }
     return;
   }
-  if (url.pathname === "/health") {
-    res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ status: "ok", provider: "vidsrc-sh" }));
-    return;
-  }
-  if (url.pathname !== "/") {
-    res.writeHead(404, { "content-type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ error: "Not found" }));
-    return;
-  }
-  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-  res.end(html);
+  if (url.pathname === "/health") { res.writeHead(200, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ status: "ok", provider: "stremio-addon-ecosystem" })); return; }
+  if (url.pathname !== "/") { res.writeHead(404, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "Not found" })); return; }
+  res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" }); res.end(html);
 });
-server.listen(PORT, "0.0.0.0", () => console.log(`VidSrc.sh test bench listening on ${PORT}`));
+server.listen(PORT, "0.0.0.0", () => console.log(`Stremio Add-on Explorer listening on ${PORT}`));
