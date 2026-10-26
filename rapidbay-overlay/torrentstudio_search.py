@@ -2,8 +2,8 @@
 import re
 from urllib.parse import quote, urljoin
 
+import lxml.html
 import requests
-from bs4 import BeautifulSoup
 
 HOSTS = ("https://1337x.to", "https://1337x.st", "https://x1337x.ws", "https://x1337x.eu", "https://x1337x.cc")
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36"}
@@ -23,18 +23,18 @@ def search(searchterm: str, limit: int = 30) -> list[dict]:
             response = requests.get(f"{host}/search/{encoded}/1/", headers=HEADERS, timeout=TIMEOUT)
             if response.status_code >= 400:
                 continue
-            soup = BeautifulSoup(response.text, "html.parser")
-            for link in soup.select('a[href^="/torrent/"]'):
+            document = lxml.html.fromstring(response.content)
+            for link in document.xpath("//a[starts-with(@href, '/torrent/')]"):
                 href = link.get("href", "")
-                row = link.find_parent("tr")
-                title = link.get_text(" ", strip=True)
-                if not href or not row or not title or href in seen:
+                rows = link.xpath("ancestor::tr[1]")
+                title = " ".join(link.text_content().split())
+                if not href or not rows or not title or href in seen:
                     continue
                 normalized = " ".join(re.findall(r"[a-z0-9]+", title.lower()))
                 if tokens and not all(token in normalized for token in tokens):
                     continue
-                cells = row.find_all("td")
-                text = " ".join(cell.get_text(" ", strip=True) for cell in cells)
+                cells = rows[0].xpath("./td")
+                text = " ".join(" ".join(cell.text_content().split()) for cell in cells)
                 size_match = re.search(r"[\d.]+\s*[KMGT]i?B", text, re.I)
                 if not size_match:
                     continue
@@ -45,7 +45,7 @@ def search(searchterm: str, limit: int = 30) -> list[dict]:
                 results.append({"title": title, "seeds": max(0, seeders), "magnet": None, "torrent_link": detail_url})
             if results:
                 break
-        except requests.RequestException:
+        except (requests.RequestException, ValueError, lxml.etree.ParserError):
             continue
     results.sort(key=lambda item: item.get("seeds", 0), reverse=True)
     return results[:max(1, min(limit, 50))]
