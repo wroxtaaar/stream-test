@@ -2,7 +2,7 @@ import http from "node:http";
 import { URL } from "node:url";
 
 const PORT = Number(process.env.PORT || 3000);
-const html = String.raw\`<!doctype html>
+const html = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stream Test Lab — Search & Play</title>
 <style>
@@ -30,7 +30,7 @@ const $=id=>document.getElementById(id);let selectedType="movie";
 function msg(id,text){$(id).textContent=text;}
 async function search(){const q=$("query").value.trim();if(!q){msg("searchStatus","Enter a title or IMDb ID.");return;}selectedType=$("kind").value;msg("searchStatus","Searching titles…");$("results").replaceChildren();if(/^tt\\d{7,}$/.test(q)){$("id").value=q;const d=document.createElement("div");d.className="result";d.textContent="IMDb ID selected: "+q;const b=document.createElement("button");b.textContent="Use this ID";b.style.marginTop="10px";b.addEventListener("click",()=>{msg("searchStatus","IMDb ID ready. Now check playback sources.");msg("sourceStatus","Ready to check "+q);});d.append(b);$("results").append(d);return;}try{const r=await fetch("/api/search?q="+encodeURIComponent(q)+"&type="+encodeURIComponent(selectedType));const data=await r.json();if(!r.ok)throw Error(data.error||"Search failed");if(!data.results.length){msg("searchStatus","No results. Try another title or enter an IMDb ID.");return;}msg("searchStatus","Choose a title to use its IMDb ID.");for(const item of data.results){const d=document.createElement("div");d.className="result";const title=document.createElement("strong");title.textContent=item.name;const meta=document.createElement("p");meta.className="muted";meta.textContent=[item.year,item.id].filter(Boolean).join(" · ");const b=document.createElement("button");b.textContent="Select title";b.addEventListener("click",()=>{$("id").value=item.id;msg("sourceStatus","Selected "+item.name+" ("+item.id+").");});d.append(title,meta,b);$("results").append(d);}}catch(e){msg("searchStatus","Search failed: "+e.message);}}
 $("search").addEventListener("click",search);$("query").addEventListener("keydown",e=>{if(e.key==="Enter")search();});$("check").addEventListener("click",()=>{const id=$("id").value.trim();if(!/^tt\\d{7,}$/.test(id)){msg("sourceStatus","Search and select a title first, or enter a valid IMDb ID.");return;}msg("sourceStatus","No built-in playback providers are connected in this branch yet. The IMDb ID is ready, but a compatible stream source must be configured before playback can work.");$("sources").replaceChildren();const d=document.createElement("div");d.className="result";d.textContent="No source configured — no playable URL can be returned for "+id+"."; $("sources").append(d);});$("clear").addEventListener("click",()=>{$("id").value="";$("results").replaceChildren();$("sources").replaceChildren();msg("searchStatus","Enter a title or IMDb ID to begin.");msg("sourceStatus","Cleared.");});
-</script></body></html>\`;
+</script></body></html>`;
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://localhost");
