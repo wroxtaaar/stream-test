@@ -1,0 +1,15 @@
+# Isolated CinePro Core test service.
+# Clone cinepro-org/core into provider-lab/vendor/cinepro-core before starting.
+services:
+  cinepro-core:
+    build:
+      context: ./vendor/cinepro-core
+    container_name: stream-test-cinepro-core
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      TMDB_API_KEY: ${TMDB_API_KEY:?Set TMDB_API_KEY in provider-lab/.env.provider-lab}
