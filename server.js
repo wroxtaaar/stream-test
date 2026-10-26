@@ -56,7 +56,7 @@ $("open").addEventListener("click",()=>{try{currentUrl=build();$("url").textCont
 $("clear").addEventListener("click",()=>{$("player").src="about:blank";$("url").textContent="No URL generated yet.";$("status").textContent="Player cleared.";currentUrl="";});
 </script></body></html>`;
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://localhost");
   if (url.pathname === "/api/search") {
     const q = (url.searchParams.get("q") || "").trim();
