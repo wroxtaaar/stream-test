@@ -1,36 +1,28 @@
-# Stream Test
+# Stream Test — Videasy
 
-A standalone Node.js VidSrc embed test harness with title search.
+Standalone Node.js + Docker Compose harness for testing Videasy embeds. This branch is isolated from `main`.
 
-## Features
+## Test coverage
+- Movie and TV episode embed URL construction
+- TMDB numeric IDs and IMDb IDs (`tt...`)
+- Autoplay and TV auto-next query parameters
+- Default subtitle-language request
+- Embedded player and open-in-new-tab comparison
+- Manual testing of actual audio tracks, including Hindi where available
 
-- Search movies and TV series by name using the Cinemeta metadata catalog (no API key required)
-- Select a result and load the VidSrc embed player
-- Check VidSrc title/episode availability and inspect the raw JSON response
-- Supports numeric TMDB IDs and IMDb IDs (`tt...`)
-- Health endpoint at `/health`
-
-## Run on the VPS
+## Run on the Oracle VPS
 
 ```bash
-git pull
+cd ~/stream-test
+git fetch origin
+git switch provider/videasy
+git pull origin provider/videasy
 docker compose up -d --build
 docker compose logs --tail=50 stream-test
 ```
 
-The app listens on port `3000`:
+Open `http://YOUR_VPS_IP:3000`; health check: `http://YOUR_VPS_IP:3000/health`.
 
-- UI: `http://YOUR_VPS_IP:3000`
-- Health: `http://YOUR_VPS_IP:3000/health`
+The default preset is Avengers: Endgame (TMDB ID `299534`). To test TV, choose TV episode and enter a TMDB series ID, season, and episode. A subtitle-language query is not an audio-dubbing switch: inspect the player's actual audio-track menu to verify Hindi audio.
 
-**Port note:** if another app already uses port 3000 on this VPS, Docker cannot bind this port until that app is stopped or the host port is changed. Keep the container-side port at `3000`.
-
-## Search notes
-
-Title search uses Cinemeta's public metadata catalog and does not require a TMDB API key. Search results depend on that catalog's availability. VidSrc embeds are provider-hosted; HTTP success or metadata availability does not guarantee playback. This app does not extract direct HLS URLs.
-
-## Security
-
-- Do not expose this test app publicly without access control and HTTPS.
-- Only test content you are authorized to access.
-- Do not commit API credentials or secrets.
+Embed pattern follows the Videasy documentation: `https://player.videasy.ws/embed/movie/{id}` and `https://player.videasy.ws/embed/tv/{id}/{season}/{episode}`. Provider availability, audio tracks, ads, and playback may change. This test harness does not extract stream URLs. Test only content you are authorized to access.
