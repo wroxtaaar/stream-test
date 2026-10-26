@@ -22,7 +22,12 @@ button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}
 <div style="color:#a8b7ff;text-transform:uppercase;letter-spacing:.16em;font-size:11px;font-weight:800">Stream Test Lab / Provider</div>
 <h1>Videasy test bench</h1><p>Isolated test harness for Videasy movie and TV embeds. Test playback and audio/subtitle options here before considering any integration into another project.</p>
 <div><span class="tag">Movie + TV</span><span class="tag">TMDB / IMDb ID</span><span class="tag">No API key configured</span></div>
-<section class="panel"><h2>Configure test</h2><div class="fields">
+<section class="panel"><h2>1. Search for a title</h2><div class="fields">
+<div><label for="searchKind">Search type</label><select id="searchKind"><option value="movie">Movies</option><option value="series">TV series</option></select></div>
+<div style="grid-column:span 2"><label for="searchQuery">Title</label><input id="searchQuery" placeholder="e.g. Breaking Bad or Avengers: Endgame"></div>
+<div><label>&nbsp;</label><button id="searchButton">Search titles</button></div>
+</div><div id="searchStatus" class="status">Search by name, then select a result to fill in its ID.</div><div id="searchResults" class="fields"></div></section>
+<section class="panel"><h2>2. Configure test</h2><div class="fields">
 <div><label for="kind">Content type</label><select id="kind"><option value="movie">Movie</option><option value="tv">TV episode</option></select></div>
 <div><label for="id">TMDB or IMDb ID</label><input id="id" value="299534" placeholder="e.g. 299534 or tt1234567"></div>
 <div id="seasonWrap" hidden><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
@@ -31,12 +36,14 @@ button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}
 <div><label for="autonext">Auto-next (TV)</label><select id="autonext"><option value="0">Off</option><option value="1">On</option></select></div>
 <div><label for="subtitles">Default subtitles</label><select id="subtitles"><option value="">Provider default</option><option value="en">English</option><option value="hi">Hindi</option><option value="es">Spanish</option></select></div>
 </div><div class="actions"><button id="load">Load player</button><button class="secondary" id="open">Open embed in new tab</button><button class="secondary" id="clear">Clear</button></div>
-<div id="status" class="status" role="status">Ready. The default preset is Avengers: Endgame (TMDB 299534).</div></section>
+<div id="status" class="status" role="status">Search for a title above or enter an ID manually. Preset: Avengers: Endgame (299534).</div></section>
 <div class="layout"><section class="panel"><h2>Player</h2><iframe id="player" title="Videasy player" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe><p>Audio tracks depend on the provider's source for each title. The subtitle parameter requests a default subtitle language; it does not force a dubbed audio track.</p></section>
 <section class="panel"><h2>Generated URL</h2><div id="url" class="url">No URL generated yet.</div><h3>Test checklist</h3><ul><li>Does playback start?</li><li>Can you switch audio tracks, including Hindi if present?</li><li>Are subtitles selectable?</li><li>Does TV episode navigation work?</li><li>Does the same title work in a new tab and iframe?</li></ul></section></div>
 <section class="panel"><h3>Known limitations</h3><p>This harness only constructs the documented embed URL and loads the provider-hosted player. A successful HTTP response does not guarantee a playable stream. Test only content you are authorized to access; third-party embeds may include ads and can change without notice.</p></section>
 </main><script>
 const $=id=>document.getElementById(id);let currentUrl="";
+async function searchTitles(){const q=$("searchQuery").value.trim();if(!q){$("searchStatus").textContent="Enter a title to search.";return;}const kind=$("searchKind").value;$("searchStatus").textContent="Searching titles…";$("searchResults").replaceChildren();try{const r=await fetch("/api/search?q="+encodeURIComponent(q)+"&type="+encodeURIComponent(kind));const data=await r.json();if(!r.ok)throw new Error(data.error||"Search failed");if(!data.results?.length){$("searchStatus").textContent="No results found. Try another title or enter an ID manually.";return;}$("searchStatus").textContent="Choose a result to fill in the ID and content type.";for(const item of data.results){const card=document.createElement("div");card.style.cssText="border:1px solid #344264;border-radius:10px;padding:12px;background:#0a1120";const title=document.createElement("strong");title.textContent=item.name||item.id;const meta=document.createElement("p");meta.style.cssText="font-size:12px;margin:6px 0";meta.textContent=[item.year,item.id].filter(Boolean).join(" · ");const btn=document.createElement("button");btn.textContent="Use this title";btn.addEventListener("click",()=>{$("kind").value=kind==="movie"?"movie":"tv";$("id").value=item.id;sync();$("status").textContent="Selected "+(item.name||item.id)+". If the provider expects a different ID type, try its TMDB ID manually.";window.scrollTo({top:$("id").getBoundingClientRect().top+window.scrollY-100,behavior:"smooth"});});card.append(title,meta,btn);$("searchResults").append(card);}}catch(e){$("searchStatus").textContent="Search unavailable: "+e.message;}}
+$("searchButton").addEventListener("click",searchTitles);$("searchQuery").addEventListener("keydown",e=>{if(e.key==="Enter")searchTitles();});
 function sync(){const tv=$("kind").value==="tv";$("seasonWrap").hidden=!tv;$("episodeWrap").hidden=!tv;}
 function build(){const kind=$("kind").value,id=$("id").value.trim();if(!id)throw new Error("Enter a TMDB or IMDb ID.");
 if(!/^(tt\\d{7,}|\\d+)$/.test(id))throw new Error("Use a numeric TMDB ID or IMDb ID starting with tt.");
@@ -51,6 +58,27 @@ $("clear").addEventListener("click",()=>{$("player").src="about:blank";$("url").
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", "http://localhost");
+  if (url.pathname === "/api/search") {
+    const q = (url.searchParams.get("q") || "").trim();
+    const type = url.searchParams.get("type") === "series" ? "series" : "movie";
+    if (!q) {
+      res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Missing search query" }));
+      return;
+    }
+    try {
+      const upstream = await fetch("https://v3-cinemeta.strem.io/catalog/" + type + "/top/search=" + encodeURIComponent(q) + ".json", { headers: { "accept": "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (!upstream.ok) throw new Error("Metadata catalog returned HTTP " + upstream.status);
+      const data = await upstream.json();
+      const results = (data.metas || []).slice(0, 12).map(item => ({ id: item.imdb_id || item.id, name: item.name, year: item.releaseInfo || item.year || "" })).filter(item => item.id);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      res.end(JSON.stringify({ results }));
+    } catch (error) {
+      res.writeHead(502, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Title search failed: " + error.message }));
+    }
+    return;
+  }
   if (url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     res.end(JSON.stringify({ status: "ok", provider: "videasy" }));
