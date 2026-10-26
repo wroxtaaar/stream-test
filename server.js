@@ -56,7 +56,7 @@ async function readResponse(r){const raw=await r.text();try{return {data:JSON.pa
 function stopVideo(){if(hls){hls.destroy();hls=null}const v=$('video');if(v){v.pause();v.removeAttribute('src');v.load()}}
 function setEmbed(){
  const id=$('id').value.trim(),kind=$('kind').value,s=$('season').value.trim(),ep=$('episode').value.trim();
- if(!/^\d+$/.test(id)){status('Enter a numeric TMDB ID.');return}
+ if(!/^(\d+|tt\d+)$/i.test(id)){status('Select a search result or enter a numeric TMDB ID / IMDb ID (tt...).');return}
  if(kind==='tv'&&(!/^\d+$/.test(s)||! /^\d+$/.test(ep))){status('Season and episode must be numeric.');return}
  const custom=$('custom').value.trim();
  const src=custom||(kind==='movie'?'https://vidsrc.ir/embed/movie/'+id:'https://vidsrc.ir/embed/tv/'+id+'/'+s+'/'+ep);
@@ -107,7 +107,7 @@ const server = http.createServer(async (req, res) => {
       const kind = base.searchParams.get("kind");
       const id = base.searchParams.get("id");
       const provider = base.searchParams.get("provider") || "vidsrc.ir";
-      if (!["movie", "tv"].includes(kind) || !id || !/^\d+$/.test(id) || !/^[a-zA-Z0-9._-]{1,40}$/.test(provider)) {
+      if (!["movie", "tv"].includes(kind) || !id || !/^(\d+|tt\d+)$/i.test(id) || !/^[a-zA-Z0-9._-]{1,40}$/.test(provider)) {
         return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Valid kind, numeric TMDB id, and provider are required." }));
       }
       if (kind === "movie") path = `/info/movie/${id}.json`;
