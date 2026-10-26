@@ -35,12 +35,12 @@ docker compose up -d --build
 docker compose logs -f stream-test
 ```
 
-The Compose setup publishes port `10080`. Open:
+The Compose setup publishes port `10081`. Open:
 
-- UI: `http://YOUR_VPS_IP:10080`
-- Health check: `http://YOUR_VPS_IP:10080/health`
+- UI: `http://YOUR_VPS_IP:10081`
+- Health check: `http://YOUR_VPS_IP:10081/health`
 
-If port 10080 is already in use, change the host side of the mapping in `docker-compose.yml`, for example `10081:10080`. Keep the container-side port at `10080`.
+If port 10081 is already in use, change the host side of the mapping in `docker-compose.yml`, for example `10081:10081`. Keep the container-side port at `10081`.
 
 Alternatively, run without Docker:
 
