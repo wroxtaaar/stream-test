@@ -3,7 +3,7 @@
 Standalone Node.js + Docker Compose harness for testing Videasy embeds. This branch is isolated from `main`.
 
 ## Test coverage
-- Movie and TV episode embed URL construction
+- Search movies and TV series by title using Cinemeta metadata (no API key)\n- Select a search result to fill in the title ID\n- Movie and TV episode embed URL construction
 - TMDB numeric IDs and IMDb IDs (`tt...`)
 - Autoplay and TV auto-next query parameters
 - Default subtitle-language request
