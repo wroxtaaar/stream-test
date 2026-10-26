@@ -31,8 +31,8 @@ h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.04em;margin:8px 0}h2,h3{margi
 <div class="fields">
 <div><label for="kind">Content type</label><select id="kind"><option value="movie">Movie</option><option value="tv">TV episode</option></select></div>
 <div><label for="id">TMDB ID</label><input id="id" value="550" inputmode="numeric" placeholder="e.g. 550"></div>
-<div><label for="season">Season</label><input id="season" value="1" inputmode="numeric"></div>
-<div><label for="episode">Episode</label><input id="episode" value="1" inputmode="numeric"></div>
+<div id="seasonField" hidden><label for="season">Season</label><input id="season" value="1" inputmode="numeric"></div>
+<div id="episodeField" hidden><label for="episode">Episode</label><input id="episode" value="1" inputmode="numeric"></div>
 <div><label for="provider">Provider</label><select id="provider"><option value="vidsrc.ir">VidSrc (vidsrc.ir)</option></select></div>
 <div class="wide"><label for="custom">Optional embed URL override</label><input id="custom" placeholder="Leave blank to use the official documented embed pattern"></div>
 </div>
@@ -79,7 +79,7 @@ $('resolve').onclick=async()=>{
  }catch(e){status('Resolve failed: '+e.message);$('streamUrl').textContent='Resolve failed.'}
  finally{b.disabled=false}
 };
-$('kind').onchange=()=>{const tv=$('kind').value==='tv';$('season').disabled=!tv;$('episode').disabled=!tv};
+$('kind').onchange=()=>{const tv=$('kind').value==='tv';$('seasonField').hidden=!tv;$('episodeField').hidden=!tv;$('season').disabled=!tv;$('episode').disabled=!tv};
 $('kind').dispatchEvent(new Event('change'));
 </script></body></html>`;
 
