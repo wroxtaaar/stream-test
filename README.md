@@ -1,56 +1,36 @@
 # Stream Test
 
-A standalone Node.js test harness for evaluating the documented ezvidapi API independently from Torrent Studio.
+A standalone Node.js VidSrc embed test harness with title search.
 
 ## Features
 
-- Movie and TV episode testing by TMDB ID
-- Loads the API provider list and lets you select a provider
-- Shows the provider's raw JSON/text response
-- Builds the documented ezvidapi iframe embed
-- Attempts to play returned HLS URLs using native HLS or hls.js
-- Backend-only provider requests to avoid browser CORS restrictions
+- Search movies and TV series by name using the Cinemeta metadata catalog (no API key required)
+- Select a result and load the VidSrc embed player
+- Check VidSrc title/episode availability and inspect the raw JSON response
+- Supports numeric TMDB IDs and IMDb IDs (`tt...`)
 - Health endpoint at `/health`
-
-## API endpoints used
-
-The official site documents these endpoints. The JSON API host shown in its examples is `https://api.ezvidapi.com`:
-
-- Movie embed: `https://ezvidapi.com/embed/movie/:tmdb_id`
-- TV episode embed: `https://ezvidapi.com/embed/tv/:tmdb_id/:season/:episode`
-- Provider list: `GET https://api.ezvidapi.com/list`
-- Movie HLS resolution: `GET https://api.ezvidapi.com/movie/:provider/:tmdb_id`
-- TV HLS resolution: `GET https://api.ezvidapi.com/tv/:provider/:tmdb_id?season=:season&episode=:episode`
-
-The service may change its API, be unavailable, or return different response shapes. The test UI intentionally shows the raw response so you can verify real behavior instead of assuming playback succeeded.
 
 ## Run on the VPS
 
-Requirements: Docker + Docker Compose, or Node.js 20+.
-
 ```bash
-git clone https://github.com/wroxtaaar/stream-test.git
-cd stream-test
+git pull
 docker compose up -d --build
-docker compose logs -f stream-test
+docker compose logs --tail=50 stream-test
 ```
 
-The Compose setup publishes port `10081`. Open:
+The app listens on port `3000`:
 
-- UI: `http://YOUR_VPS_IP:10081`
-- Health check: `http://YOUR_VPS_IP:10081/health`
+- UI: `http://YOUR_VPS_IP:3000`
+- Health: `http://YOUR_VPS_IP:3000/health`
 
-If port 10081 is already in use, change the host side of the mapping in `docker-compose.yml`, for example `10081:10081`. Keep the container-side port at `10081`.
+**Port note:** if another app already uses port 3000 on this VPS, Docker cannot bind this port until that app is stopped or the host port is changed. Keep the container-side port at `3000`.
 
-Alternatively, run without Docker:
+## Search notes
 
-```bash
-npm start
-```
+Title search uses Cinemeta's public metadata catalog and does not require a TMDB API key. Search results depend on that catalog's availability. VidSrc embeds are provider-hosted; HTTP success or metadata availability does not guarantee playback. This app does not extract direct HLS URLs.
 
 ## Security
 
 - Do not expose this test app publicly without access control and HTTPS.
-- Keep the server reachable only from your own network while testing.
 - Only test content you are authorized to access.
 - Do not commit API credentials or secrets.
