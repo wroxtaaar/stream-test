@@ -81,8 +81,8 @@ function buildUrl() {
   const ep = $("episode").value.trim();
   const mode = $("mode").value;
   const autoplay = $("autoplay").value;
-  if (!/^\\d{1,8}$/.test(id) || Number(id) < 1) throw new Error("Enter a positive numeric MAL ID.");
-  if (!/^\\d{1,4}$/.test(ep) || Number(ep) < 1) throw new Error("Episode must be a positive number.");
+  if (!/^\d{1,8}$/.test(id) || Number(id) < 1) throw new Error("Enter a positive numeric MAL ID.");
+  if (!/^\d{1,4}$/.test(ep) || Number(ep) < 1) throw new Error("Episode must be a positive number.");
   const params = new URLSearchParams();
   params.set("autoplay", autoplay);
   if (mode === "dub") params.set("dub", "true");
