@@ -58,3 +58,41 @@ new_settings_loop = '''    if _env_var is not _NULL:
 if old_settings_loop not in settings_source:
     raise SystemExit("Could not find expected settings environment loader; refusing to patch unexpected upstream source")
 settings_path.write_text(settings_source.replace(old_settings_loop, new_settings_loop, 1))
+
+
+# The frontend uses the SSE endpoint. Include the built-in provider in that path
+# too; otherwise the initial request returns the stale "no backend configured"
+# placeholder even though the normal search endpoint knows about this provider.
+old_stream_guard = '''        if not (settings.JACKETT_HOST or settings.PROWLARR_HOST):
+            yield event({"results": _serialize_results(_NO_BACKEND_RESULTS), "done": True})
+            return
+'''
+new_stream_guard = '''        torrent_studio_enabled = os.getenv("TORRENT_STUDIO_SEARCH_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+        if not (settings.JACKETT_HOST or settings.PROWLARR_HOST or torrent_studio_enabled):
+            yield event({"results": _serialize_results(_NO_BACKEND_RESULTS), "done": True})
+            return
+'''
+if old_stream_guard not in source:
+    raise SystemExit("Could not find expected SSE no-backend guard; refusing to patch unexpected upstream source")
+source = source.replace(old_stream_guard, new_stream_guard, 1)
+
+old_stream_list = '''    if settings.PROWLARR_HOST:
+        streams.append(prowlarr.search_stream(searchterm))
+
+    tasks = [asyncio.ensure_future(pump(s)) for s in streams]
+'''
+new_stream_list = '''    if settings.PROWLARR_HOST:
+        streams.append(prowlarr.search_stream(searchterm))
+    if os.getenv("TORRENT_STUDIO_SEARCH_ENABLED", "1").lower() in {"1", "true", "yes", "on"}:
+        async def torrent_studio_stream() -> AsyncIterator[List[Dict[str, Any]]]:
+            results = await asyncio.to_thread(torrentstudio_search.search, searchterm)
+            if results:
+                yield results
+        streams.append(torrent_studio_stream())
+
+    tasks = [asyncio.ensure_future(pump(s)) for s in streams]
+'''
+if old_stream_list not in source:
+    raise SystemExit("Could not find expected merged SSE stream list; refusing to patch unexpected upstream source")
+source = source.replace(old_stream_list, new_stream_list, 1)
+path.write_text(source)
