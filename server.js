@@ -1,11 +1,11 @@
 import http from "node:http";
 import { URL } from "node:url";
 
-const PORT = Number(process.env.PORT || 10080);
+const PORT = Number(process.env.PORT || 10081);
 const API_ORIGIN = "https://api.ezvidapi.com";
 const EMBED_ORIGIN = "https://ezvidapi.com";
 
-const html = String.raw\`<!doctype html>
+const html = String.raw`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -92,7 +92,7 @@ $('loadList').onclick=async()=>{
 };
 $('kind').onchange=()=>{const tv=$('kind').value==='tv';$('season').disabled=!tv;$('episode').disabled=!tv};
 $('kind').dispatchEvent(new Event('change'));
-</script></body></html>\`;
+</script></body></html>`;
 
 function send(res, code, type, body) {
   res.writeHead(code, { "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -107,7 +107,7 @@ async function requestProvider(path) {
   return { status: upstream.status, contentType: upstream.headers.get("content-type") || "text/plain; charset=utf-8", body };
 }
 const server = http.createServer(async (req, res) => {
-  const base = new URL(req.url || "/", \`http://localhost:\${PORT}\`);
+  const base = new URL(req.url || "/", `http://localhost:${PORT}`);
   if (base.pathname === "/health") return send(res, 200, "application/json; charset=utf-8", JSON.stringify({ status: "ok", provider: "ezvidapi", apiOrigin: API_ORIGIN }));
   if (base.pathname === "/") return send(res, 200, "text/html; charset=utf-8", html);
   if (base.pathname === "/api/list" || base.pathname === "/api/resolve") {
@@ -121,14 +121,14 @@ const server = http.createServer(async (req, res) => {
       if (!["movie", "tv"].includes(kind) || !id || !/^\d+$/.test(id) || !/^[a-zA-Z0-9_-]{1,40}$/.test(provider)) {
         return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Valid kind, numeric TMDB id, and provider are required." }));
       }
-      if (kind === "movie") path = \`/movie/\${encodeURIComponent(provider)}/\${id}\`;
+      if (kind === "movie") path = `/movie/${encodeURIComponent(provider)}/${id}`;
       else {
         const season = base.searchParams.get("season");
         const episode = base.searchParams.get("episode");
         if (!season || !episode || !/^\d+$/.test(season) || !/^\d+$/.test(episode)) {
           return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "TV requests require numeric season and episode values." }));
         }
-        path = \`/tv/\${encodeURIComponent(provider)}/\${id}?season=\${season}&episode=\${episode}\`;
+        path = `/tv/${encodeURIComponent(provider)}/${id}?season=${season}&episode=${episode}`;
       }
     }
     try {
@@ -142,4 +142,4 @@ const server = http.createServer(async (req, res) => {
   }
   send(res, 404, "text/plain; charset=utf-8", "Not found");
 });
-server.listen(PORT, "0.0.0.0", () => console.log(\`Stream Test listening on 0.0.0.0:\${PORT}\`));
+server.listen(PORT, "0.0.0.0", () => console.log(`Stream Test listening on 0.0.0.0:${PORT}`));
