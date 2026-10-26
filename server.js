@@ -115,7 +115,7 @@ const server = http.createServer(async (req, res) => {
     const type = base.searchParams.get("type") === "series" ? "series" : "movie";
     if (!q || q.length > 100) return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Enter a title (maximum 100 characters)." }));
     try {
-      const catalogType = type === "series" ? "tv" : "movie";
+      const catalogType = type === "series" ? "series" : "movie";
       const url = `https://v3-cinemeta.strem.io/catalog/${catalogType}/top/search=${encodeURIComponent(q)}.json`;
       const upstream = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(12000) });
       const body = await upstream.text();
