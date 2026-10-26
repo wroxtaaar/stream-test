@@ -12,4 +12,9 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: "3000"
+      # Prefer IPv4 because the VPS network path to TMDB reset with Node's default address selection.
+      NODE_OPTIONS: --dns-result-order=ipv4first
+      # CinePro uses PUBLIC_URL to build absolute proxy URLs in source responses.
+      # Default is for curl/testing on the VPS only; use your reachable URL for browser playback.
+      PUBLIC_URL: ${CINEPRO_PUBLIC_URL:-http://localhost:3001}
       TMDB_API_KEY: ${TMDB_API_KEY:?Set TMDB_API_KEY in provider-lab/.env.provider-lab}
