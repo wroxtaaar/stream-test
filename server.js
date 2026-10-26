@@ -107,7 +107,7 @@ const server = http.createServer(async (req, res) => {
       const kind = base.searchParams.get("kind");
       const id = base.searchParams.get("id");
       const provider = base.searchParams.get("provider") || "vidsrc.ir";
-      if (!["movie", "tv"].includes(kind) || !id || !/^\d+$/.test(id) || !/^[a-zA-Z0-9_-]{1,40}$/.test(provider)) {
+      if (!["movie", "tv"].includes(kind) || !id || !/^\d+$/.test(id) || !/^[a-zA-Z0-9._-]{1,40}$/.test(provider)) {
         return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Valid kind, numeric TMDB id, and provider are required." }));
       }
       if (kind === "movie") path = `/info/movie/${id}.json`;
