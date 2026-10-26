@@ -2,8 +2,8 @@ import http from "node:http";
 import { URL } from "node:url";
 
 const PORT = Number(process.env.PORT || 10081);
-const API_ORIGIN = "https://api.ezvidapi.com";
-const EMBED_ORIGIN = "https://ezvidapi.com";
+const API_ORIGIN = "https://vidsrc.ir";
+const EMBED_ORIGIN = "https://vidsrc.ir";
 
 const html = String.raw`<!doctype html>
 <html lang="en">
@@ -23,9 +23,9 @@ h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.04em;margin:8px 0}h2,h3{margi
 </head>
 <body><main>
 <div class="eyebrow">Stream Test Lab / Provider 01</div>
-<h1>ezvidapi test bench</h1>
-<p>Test the provider’s documented TMDB-ID workflow independently from Torrent Studio. Compare its embed player with a resolved HLS URL, inspect the response, and record real availability.</p>
-<div><span class="tag">No API key documented</span><span class="tag">Movies + TV episodes</span><span class="tag">Server-side requests</span></div>
+<h1>VidSrc test bench</h1>
+<p>Test VidSrc movie and TV embeds independently from Torrent Studio. Check title availability metadata and load the provider-hosted player.</p>
+<div><span class="tag">No API key documented</span><span class="tag">Movies + TV episodes</span><span class="tag">Embed-first integration</span></div>
 <section class="panel">
 <h2>1. Select a title</h2>
 <div class="fields">
@@ -33,16 +33,16 @@ h1{font-size:clamp(30px,5vw,46px);letter-spacing:-.04em;margin:8px 0}h2,h3{margi
 <div><label for="id">TMDB ID</label><input id="id" value="550" inputmode="numeric" placeholder="e.g. 550"></div>
 <div><label for="season">Season</label><input id="season" value="1" inputmode="numeric"></div>
 <div><label for="episode">Episode</label><input id="episode" value="1" inputmode="numeric"></div>
-<div><label for="provider">HLS provider</label><select id="provider"><option value="vidsrc">vidsrc</option></select></div>
+<div><label for="provider">Provider</label><select id="provider"><option value="vidsrc.ir">VidSrc (vidsrc.ir)</option></select></div>
 <div class="wide"><label for="custom">Optional embed URL override</label><input id="custom" placeholder="Leave blank to use the official documented embed pattern"></div>
 </div>
-<div class="actions"><button id="resolve">Resolve HLS URL</button><button id="loadEmbed" class="secondary">Load embed player</button><button id="loadList" class="secondary">Refresh provider list</button></div>
+<div class="actions"><button id="resolve">Check availability</button><button id="loadEmbed" class="secondary">Load embed player</button></div>
 <div id="status" class="status" role="status">Ready. Test a title ID you are authorized to access.</div>
 </section>
 <div class="layout">
-<section class="panel"><h2>2. Embed player</h2><iframe id="embed" title="ezvidapi embed preview" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe><p class="muted">The embed is hosted by ezvidapi. Availability and player behavior are controlled by the provider.</p><div id="embedUrl" class="url">No embed loaded.</div></section>
-<section class="panel"><h2>3. Direct HLS preview</h2><video id="video" controls playsinline></video><p class="muted">HLS playback is browser-dependent. Safari may play HLS natively; other browsers generally need hls.js.</p><div id="streamUrl" class="url">No stream resolved.</div></section>
-<section class="panel"><h2>Provider list response</h2><pre id="providers">Select “Refresh provider list” to query the API.</pre></section>
+<section class="panel"><h2>2. VidSrc embed player</h2><iframe id="embed" title="VidSrc embed preview" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen referrerpolicy="no-referrer"></iframe><p class="muted">Playback is hosted by VidSrc. This integration uses the documented embed player; it does not claim to extract direct HLS URLs.</p><div id="embedUrl" class="url">No embed loaded.</div></section>
+<section class="panel"><h2>3. Availability result</h2><p class="muted">VidSrc content-info endpoint reports whether a title is listed and may return quality and embed metadata. A successful metadata response does not guarantee playback.</p><div id="streamUrl" class="url">No availability check yet.</div></section>
+
 <section class="panel"><h2>Last resolve response</h2><pre id="raw">No resolve request yet.</pre></section>
 </div>
 <section class="panel"><h3>Test notes</h3><p>HTTP success does not guarantee that a stream exists or is playable. Hosted upstreams can change or become unavailable. Use only content you are authorized to access. This app is a test harness, not a content catalog.</p></section>
@@ -59,36 +59,32 @@ function setEmbed(){
  if(!/^\d+$/.test(id)){status('Enter a numeric TMDB ID.');return}
  if(kind==='tv'&&(!/^\d+$/.test(s)||! /^\d+$/.test(ep))){status('Season and episode must be numeric.');return}
  const custom=$('custom').value.trim();
- const src=custom||(kind==='movie'?'https://ezvidapi.com/embed/movie/'+id:'https://ezvidapi.com/embed/tv/'+id+'/'+s+'/'+ep+'?provider='+encodeURIComponent($('provider').value));
- $('embed').src=src;$('embedUrl').textContent=src;status('Embed loaded. It may take a moment for the upstream player to initialize.');
+ const src=custom||(kind==='movie'?'https://vidsrc.ir/embed/movie/'+id:'https://vidsrc.ir/embed/tv/'+id+'/'+s+'/'+ep);
+ $('embed').src=src;$('embedUrl').textContent=src;status('VidSrc embed loaded. Playback depends on the provider and title availability.');
 }
 $('loadEmbed').onclick=setEmbed;
 $('resolve').onclick=async()=>{
  const id=$('id').value.trim(),kind=$('kind').value,s=$('season').value.trim(),ep=$('episode').value.trim(),provider=$('provider').value;
  if(!/^\d+$/.test(id)){status('Enter a numeric TMDB ID.');return}
  if(kind==='tv'&&(!/^\d+$/.test(s)||! /^\d+$/.test(ep))){status('Season and episode must be numeric.');return}
- const b=$('resolve');b.disabled=true;status('Requesting HLS stream from ezvidapi…');$('raw').textContent='Loading…';$('streamUrl').textContent='Resolving…';stopVideo();
+ const b=$('resolve');b.disabled=true;status('Checking VidSrc title availability…');$('raw').textContent='Loading…';$('streamUrl').textContent='Resolving…';stopVideo();
  try{
   const q=new URLSearchParams({kind,id,provider});if(kind==='tv'){q.set('season',s);q.set('episode',ep)}
   const r=await fetch('/api/resolve?'+q);const parsed=await readResponse(r);const data=parsed.data;$('raw').textContent=json({httpStatus:r.status,contentType:r.headers.get('content-type'),data,raw:parsed.raw});
   if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
-  const u=data.stream_url||data.streamUrl||data.url||data.src||data.m3u8||'';
-  if(typeof u!=='string'||!/^https?:\/\//i.test(u)){$('streamUrl').textContent='No recognized direct URL field. Inspect the raw response; provider may return a different shape.';status('API responded, but no known direct URL field was found.');return}
-  $('streamUrl').textContent=u;
-  const v=$('video');
-  if(v.canPlayType('application/vnd.apple.mpegurl')){v.src=u}
-  else if(window.Hls&&Hls.isSupported()){hls=new Hls();hls.loadSource(u);hls.attachMedia(v);hls.on(Hls.Events.ERROR,(_,d)=>{if(d.fatal)status('HLS player reported a fatal playback error: '+d.details)})}
-  else {status('Stream URL resolved, but this browser does not support HLS playback. Copy the URL to a compatible player.');return}
-  status('Stream URL resolved. Press play to test playback; a URL alone does not guarantee that the upstream will serve media.');
+    $('streamUrl').textContent=json(data);
+  if(data&&data.status_code===404) {status('VidSrc reports this title is unavailable.');return}
+  if(!r.ok) throw new Error('VidSrc availability endpoint returned HTTP '+r.status);
+  status('Availability response received. Use Load embed player to test playback; this endpoint does not expose a direct HLS URL.');
  }catch(e){status('Resolve failed: '+e.message);$('streamUrl').textContent='Resolve failed.'}
  finally{b.disabled=false}
 };
 $('loadList').onclick=async()=>{
  status('Loading provider list…');$('providers').textContent='Loading…';
  try{const r=await fetch('/api/list');const parsed=await readResponse(r);const data=parsed.data;$('providers').textContent=json({httpStatus:r.status,contentType:r.headers.get('content-type'),data,raw:parsed.raw});if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
- const items=Array.isArray(data)?data:(data.providers||data.results||data.data||[]);
+ const items=[];
  if(items.length){const sel=$('provider'),current=sel.value;sel.replaceChildren(...items.map(item=>{const name=typeof item==='string'?item:(item.id||item.name||item.provider);const opt=document.createElement('option');opt.value=name;opt.textContent=name;return opt}));if([...sel.options].some(o=>o.value===current))sel.value=current}
- status('Provider-list request completed: HTTP '+r.status+'. Check the response to confirm its schema.');
+ status('Provider list is not part of the VidSrc embed workflow.');
  }catch(e){status('Provider-list request failed: '+e.message)}
 };
 $('kind').onchange=()=>{const tv=$('kind').value==='tv';$('season').disabled=!tv;$('episode').disabled=!tv};
@@ -109,27 +105,27 @@ async function requestProvider(path) {
 }
 const server = http.createServer(async (req, res) => {
   const base = new URL(req.url || "/", `http://localhost:${PORT}`);
-  if (base.pathname === "/health") return send(res, 200, "application/json; charset=utf-8", JSON.stringify({ status: "ok", provider: "ezvidapi", apiOrigin: API_ORIGIN }));
+  if (base.pathname === "/health") return send(res, 200, "application/json; charset=utf-8", JSON.stringify({ status: "ok", provider: "vidsrc", apiOrigin: API_ORIGIN }));
   if (base.pathname === "/") return send(res, 200, "text/html; charset=utf-8", html);
   if (base.pathname === "/api/list" || base.pathname === "/api/resolve") {
     let path;
     if (base.pathname === "/api/list") {
-      path = "/list";
+      path = "/info/movie/550.json";
     } else {
       const kind = base.searchParams.get("kind");
       const id = base.searchParams.get("id");
-      const provider = base.searchParams.get("provider") || "vidsrc";
+      const provider = base.searchParams.get("provider") || "vidsrc.ir";
       if (!["movie", "tv"].includes(kind) || !id || !/^\d+$/.test(id) || !/^[a-zA-Z0-9_-]{1,40}$/.test(provider)) {
         return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "Valid kind, numeric TMDB id, and provider are required." }));
       }
-      if (kind === "movie") path = `/movie/${encodeURIComponent(provider)}/${id}`;
+      if (kind === "movie") path = `/info/movie/${id}.json`;
       else {
         const season = base.searchParams.get("season");
         const episode = base.searchParams.get("episode");
         if (!season || !episode || !/^\d+$/.test(season) || !/^\d+$/.test(episode)) {
           return send(res, 400, "application/json; charset=utf-8", JSON.stringify({ error: "TV requests require numeric season and episode values." }));
         }
-        path = `/tv/${encodeURIComponent(provider)}/${id}?season=${season}&episode=${episode}`;
+        path = `/info/tv/${id}/${season}/${episode}.json`;
       }
     }
     try {
