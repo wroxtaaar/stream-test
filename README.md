@@ -5,7 +5,7 @@ This branch is an isolated test bench for Yenime's public anime embed. It is int
 ## What it tests
 
 - Yenime anime embeds using a MyAnimeList (MAL) ID and episode number
-- SUB mode using the provider's published pattern: https://api.yenime.net/anime/{malId}/{episode}?autoplay=true
+- SUB mode using an observed public integration pattern: https://api.yenime.net/anime/{malId}/{episode}?autoplay=true
 - An experimental DUB URL attempt using dub=true. Yenime's public docs advertise SUB/DUB in the player but do not document this URL parameter, so treat it as a test hypothesis, not a guaranteed API feature.
 - Quick presets for Death Note (MAL 1535), Naruto (MAL 20), and Frieren (MAL 52991)
 - /health endpoint
