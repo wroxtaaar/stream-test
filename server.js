@@ -46,7 +46,7 @@ async function searchTitles(){const q=$("searchQuery").value.trim();if(!q){$("se
 $("searchButton").addEventListener("click",searchTitles);$("searchQuery").addEventListener("keydown",e=>{if(e.key==="Enter")searchTitles();});
 function sync(){const tv=$("kind").value==="tv";$("seasonWrap").hidden=!tv;$("episodeWrap").hidden=!tv;}
 function build(){const kind=$("kind").value,id=$("id").value.trim();if(!id)throw new Error("Enter a TMDB or IMDb ID.");
-if(!/^(tt\\d{7,}|\\d+)$/.test(id))throw new Error("Use a numeric TMDB ID or IMDb ID starting with tt.");
+if(!/^(tt\d{7,}|\d+)$/.test(id))throw new Error("Use a numeric TMDB ID or IMDb ID starting with tt.");
 let path=kind==="movie"?"/embed/movie/"+encodeURIComponent(id):"/embed/tv/"+encodeURIComponent(id)+"/"+Math.max(1,Number($("season").value)||1)+"/"+Math.max(1,Number($("episode").value)||1);
 const q=new URLSearchParams();q.set("autoplay",$("autoplay").value);if(kind==="tv")q.set("autonext",$("autonext").value);if($("subtitles").value)q.set("ds_lang",$("subtitles").value);
 return "https://player.videasy.ws"+path+"?"+q.toString();}
