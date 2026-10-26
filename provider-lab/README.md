@@ -33,3 +33,39 @@ This branch is an isolated evaluation area for the stream sources requested for 
 ## Current state
 
 The branch is a test-lab baseline. None of these providers has been wired into RapidBay's production search/playback paths yet. Keep integration behind a separate adapter until its tests pass.
+
+## Run CinePro Core alongside RapidBay
+
+This test uses host port **3001** and leaves RapidBay on port **3000**.
+
+From the `~/stream-test` directory on the VPS:
+
+```bash
+# Confirm you're still on the provider lab branch
+git branch --show-current
+
+# Fetch CinePro Core source separately; it is not vendored into this repository.
+mkdir -p provider-lab/vendor
+git clone https://github.com/cinepro-org/core.git provider-lab/vendor/cinepro-core
+
+# Create a private environment file. Edit it on the VPS and set your own TMDB key.
+cp provider-lab/.env.example provider-lab/.env.provider-lab
+nano provider-lab/.env.provider-lab
+
+# Start only the isolated CinePro service (do not run the whole project compose stack).
+docker compose --env-file provider-lab/.env.provider-lab -f provider-lab/docker-compose.cinepro.yml up --build -d
+
+# Inspect startup and resource use
+docker compose --env-file provider-lab/.env.provider-lab -f provider-lab/docker-compose.cinepro.yml ps
+docker logs --tail 100 stream-test-cinepro-core
+docker stats --no-stream stream-test-cinepro-core
+```
+
+Keep `provider-lab/.env.provider-lab` private; never commit it. The example environment file is only a template. CinePro Core's documented default port is 3000 inside the container, mapped here to host port 3001. Verify the actual startup logs and documented API routes before testing requests; do not assume a health endpoint exists.
+
+To stop and remove only this test container:
+
+```bash
+docker compose --env-file provider-lab/.env.provider-lab -f provider-lab/docker-compose.cinepro.yml down
+```
+
