@@ -4,6 +4,6 @@ WORKDIR /app
 COPY package.json ./
 COPY server.js ./
 USER node
-EXPOSE 10080
-ENV PORT=10080
+EXPOSE 10081
+ENV PORT=10081
 CMD ["npm", "start"]
