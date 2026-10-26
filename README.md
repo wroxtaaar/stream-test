@@ -1,36 +1,29 @@
-# Stream Test
+# Stream Test — VidSrc.cc
 
-A standalone Node.js VidSrc embed test harness with title search.
+Standalone Node.js and Docker Compose test harness for VidSrc.cc, isolated on `provider/vidsrc-cc`.
 
 ## Features
-
-- Search movies and TV series by name using the Cinemeta metadata catalog (no API key required)
-- Select a result and load the VidSrc embed player
-- Check VidSrc title/episode availability and inspect the raw JSON response
-- Supports numeric TMDB IDs and IMDb IDs (`tt...`)
+- Search movies and TV series by title using Cinemeta metadata (no API key)
+- Select a result to fill the IMDb ID
+- Movie and TV episode embeds with season/episode fields
+- Embedded player and open-in-new-tab testing
 - Health endpoint at `/health`
 
-## Run on the VPS
+## Deploy on the VPS
 
 ```bash
-git pull
+cd ~/stream-test
+git fetch origin
+git switch provider/vidsrc-cc
+git pull origin provider/vidsrc-cc
 docker compose up -d --build
 docker compose logs --tail=50 stream-test
 ```
 
-The app listens on port `3000`:
+Open `http://YOUR_VPS_IP:3000`; health check: `http://YOUR_VPS_IP:3000/health`.
 
-- UI: `http://YOUR_VPS_IP:3000`
-- Health: `http://YOUR_VPS_IP:3000/health`
+The harness constructs VidSrc.cc v2 embed URLs:
+- Movie: `https://vidsrc.cc/v2/embed/movie/{id}`
+- TV: `https://vidsrc.cc/v2/embed/tv/{id}/{season}/{episode}`
 
-**Port note:** if another app already uses port 3000 on this VPS, Docker cannot bind this port until that app is stopped or the host port is changed. Keep the container-side port at `3000`.
-
-## Search notes
-
-Title search uses Cinemeta's public metadata catalog and does not require a TMDB API key. Search results depend on that catalog's availability. VidSrc embeds are provider-hosted; HTTP success or metadata availability does not guarantee playback. This app does not extract direct HLS URLs.
-
-## Security
-
-- Do not expose this test app publicly without access control and HTTPS.
-- Only test content you are authorized to access.
-- Do not commit API credentials or secrets.
+Search may return IMDb IDs; if playback fails, try a numeric TMDB ID. The subtitle dropdown does not change audio language; check the provider player's own audio menu for Hindi tracks. Availability and behavior can change. Test only content you are authorized to access.
