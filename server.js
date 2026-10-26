@@ -4,7 +4,7 @@ import { URL } from "node:url";
 const PORT = Number(process.env.PORT || 3000);
 const html = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stream Test Lab — VidSrc.cc</title>
+<title>Stream Test Lab — VidSrc.sh</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#090d18;color:#eef2ff}*{box-sizing:border-box}
 body{margin:0;background:radial-gradient(ellipse at 10% 0,#1b2850 0,transparent 42%),#090d18}
@@ -20,7 +20,7 @@ button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}
 @media(max-width:720px){.fields,.layout{grid-template-columns:1fr 1fr}}@media(max-width:480px){.fields,.layout{grid-template-columns:1fr}}
 </style></head><body><main>
 <div style="color:#a8b7ff;text-transform:uppercase;letter-spacing:.16em;font-size:11px;font-weight:800">Stream Test Lab / Provider</div>
-<h1>VidSrc.cc test bench</h1><p>Isolated test harness for VidSrc.cc movie and TV embeds. Test playback and audio/subtitle options here before considering any integration into another project.</p>
+<h1>VidSrc.sh test bench</h1><p>Isolated test harness for VidSrc.sh movie and TV embeds. Test playback and audio/subtitle options here before considering any integration into another project.</p>
 <div><span class="tag">Movie + TV</span><span class="tag">TMDB / IMDb ID</span><span class="tag">No API key configured</span></div>
 <section class="panel"><h2>1. Search for a title</h2><div class="fields">
 <div><label for="searchKind">Search type</label><select id="searchKind"><option value="movie">Movies</option><option value="series">TV series</option></select></div>
@@ -37,7 +37,7 @@ button{background:#8798ff;color:#080e20;font-weight:800;border:0;cursor:pointer}
 <div><label for="subtitles">Default subtitles (not audio)</label><select id="subtitles"><option value="">Provider default</option><option value="en">English subtitles</option><option value="hi">Hindi subtitles</option><option value="es">Spanish subtitles</option></select></div>
 </div><div class="actions"><button id="load">Load player</button><button class="secondary" id="open">Open embed in new tab</button><button class="secondary" id="clear">Clear</button></div>
 <div id="status" class="status" role="status">Search for a title above or enter an ID manually. Preset: Avengers: Endgame (299534).</div></section>
-<div class="layout"><section class="panel"><h2>Player</h2><iframe id="player" title="VidSrc.cc player" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe><p><strong>Audio language:</strong> open the player's settings/gear menu and look for Audio or Audio track. This app's language dropdown only requests subtitles. If Hindi is not listed in the player itself, this embed does not expose a documented way to force Hindi audio for that title.</p></section>
+<div class="layout"><section class="panel"><h2>Player</h2><iframe id="player" title="VidSrc.sh player" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe><p><strong>Audio language:</strong> open the player's settings/gear menu and look for Audio or Audio track. This app's language dropdown only requests subtitles. If Hindi is not listed in the player itself, this embed does not expose a documented way to force Hindi audio for that title.</p></section>
 <section class="panel"><h2>Generated URL</h2><div id="url" class="url">No URL generated yet.</div><h3>Test checklist</h3><ul><li>Does playback start?</li><li>Open the player's gear/settings menu and check whether Audio tracks lists Hindi.</li><li>Subtitles are separate; test them with the CC button.</li><li>Does TV episode navigation work?</li><li>Does the same title work in a new tab and iframe?</li></ul></section></div>
 <section class="panel"><h3>Known limitations</h3><p>This harness only constructs the documented embed URL and loads the provider-hosted player. A successful HTTP response does not guarantee a playable stream. Test only content you are authorized to access; third-party embeds may include ads and can change without notice.</p></section>
 </main><script>
@@ -49,7 +49,7 @@ function build(){const kind=$("kind").value,id=$("id").value.trim();if(!id)throw
 if(!/^(tt\d{7,}|\d+)$/.test(id))throw new Error("Use a numeric TMDB ID or IMDb ID starting with tt.");
 let path=kind==="movie"?"/embed/movie/"+encodeURIComponent(id):"/embed/tv/"+encodeURIComponent(id)+"/"+Math.max(1,Number($("season").value)||1)+"/"+Math.max(1,Number($("episode").value)||1);
 const q=new URLSearchParams();q.set("autoplay",$("autoplay").value);if(kind==="tv")q.set("autonext",$("autonext").value);if($("subtitles").value)q.set("ds_lang",$("subtitles").value);
-return "https://vidsrc.cc/v2"+path+"?"+q.toString();}
+return "https://vidsrc.sh"+path+"?"+q.toString();}
 $("kind").addEventListener("change",sync);sync();
 $("load").addEventListener("click",()=>{try{currentUrl=build();$("player").src=currentUrl;$("url").textContent=currentUrl;$("status").textContent="Embed loaded. Check playback and available audio tracks manually.";}catch(e){$("status").textContent=e.message;}});
 $("open").addEventListener("click",()=>{try{currentUrl=build();$("url").textContent=currentUrl;window.open(currentUrl,"_blank","noopener");}catch(e){$("status").textContent=e.message;}});
@@ -81,7 +81,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (url.pathname === "/health") {
     res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ status: "ok", provider: "vidsrc-cc" }));
+    res.end(JSON.stringify({ status: "ok", provider: "vidsrc-sh" }));
     return;
   }
   if (url.pathname !== "/") {
@@ -92,4 +92,4 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   res.end(html);
 });
-server.listen(PORT, "0.0.0.0", () => console.log(`VidSrc.cc test bench listening on ${PORT}`));
+server.listen(PORT, "0.0.0.0", () => console.log(`VidSrc.sh test bench listening on ${PORT}`));
