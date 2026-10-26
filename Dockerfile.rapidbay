@@ -6,6 +6,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ARG RAPIDBAY_REF=0bb16d3eed542687f8d160c255cfb856b47f9123
 WORKDIR /src
 RUN git init . && git remote add origin https://github.com/hauxir/rapidbay.git && git fetch --depth 1 origin ${RAPIDBAY_REF} && git checkout FETCH_HEAD
+COPY rapidbay-overlay /tmp/rapidbay-overlay
+RUN cp /tmp/rapidbay-overlay/torrentstudio_search.py /src/app/torrentstudio_search.py && python3 /tmp/rapidbay-overlay/patch_rapidbay.py
 RUN uv sync --frozen --no-cache --no-dev
 
 FROM ubuntu:24.04
