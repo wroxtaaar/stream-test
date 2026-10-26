@@ -1,6 +1,4 @@
-"""Small ARM64-friendly 1337x search adapter based on Torrent Studio's provider approach.
-Returns torrent detail links; RapidBay resolves those to magnets through its existing flow.
-"""
+"""Torrent Studio-style 1337x search adapter for RapidBay."""
 import re
 from urllib.parse import quote, urljoin
 
@@ -13,7 +11,7 @@ TIMEOUT = 8
 
 
 def search(searchterm: str, limit: int = 30) -> list[dict]:
-    query = re.sub(r"\\s+", " ", (searchterm or "").strip())
+    query = re.sub(r"\s+", " ", (searchterm or "").strip())
     if not query:
         return []
     encoded = quote(query, safe="").replace("%20", "+")
@@ -37,20 +35,14 @@ def search(searchterm: str, limit: int = 30) -> list[dict]:
                     continue
                 cells = row.find_all("td")
                 text = " ".join(cell.get_text(" ", strip=True) for cell in cells)
-                size_match = re.search(r"[\\d.]+\\s*[KMGT]i?B", text, re.I)
+                size_match = re.search(r"[\d.]+\s*[KMGT]i?B", text, re.I)
                 if not size_match:
                     continue
-                numbers = [int(x.replace(",", "")) for x in re.findall(r"(?<![\\w.])\\d[\\d,]*(?![\\w.])", text)]
+                numbers = [int(x.replace(",", "")) for x in re.findall(r"(?<![\w.])\d[\d,]*(?![\w.])", text)]
                 seeders = numbers[-2] if len(numbers) >= 2 else 0
-                leechers = numbers[-1] if numbers else 0
                 detail_url = urljoin(host, href)
                 seen.add(href)
-                results.append({
-                    "title": title,
-                    "seeds": max(0, seeders),
-                    "magnet": None,
-                    "torrent_link": detail_url,
-                })
+                results.append({"title": title, "seeds": max(0, seeders), "magnet": None, "torrent_link": detail_url})
             if results:
                 break
         except requests.RequestException:
