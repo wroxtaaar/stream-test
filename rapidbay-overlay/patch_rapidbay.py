@@ -20,7 +20,7 @@ replacement = '''def _indexer_search(searchterm: str) -> List[Dict[str, Any]]:
         try:
             results.extend(torrentstudio_search.search(searchterm))
         except Exception as exc:
-            log.warning(f"Torrent Studio search provider failed: {exc}")
+            print(f"Torrent Studio search provider failed: {exc}")
     return _dedup_and_sort(results)
 '''
     text = text[:start] + replacement + text[end:]
