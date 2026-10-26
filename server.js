@@ -53,7 +53,7 @@ let hls=null;
 const status=s=>$('status').textContent=s;
 const json=(value)=>JSON.stringify(value,null,2);
 async function readResponse(r){const raw=await r.text();try{return {data:JSON.parse(raw),raw}}catch{return {data:{nonJsonResponse:raw},raw}}}
-function stopVideo(){if(hls){hls.destroy();hls=null}$('video').pause();$('video').removeAttribute('src');$('video').load()}
+function stopVideo(){if(hls){hls.destroy();hls=null}const v=$('video');if(v){v.pause();v.removeAttribute('src');v.load()}}
 function setEmbed(){
  const id=$('id').value.trim(),kind=$('kind').value,s=$('season').value.trim(),ep=$('episode').value.trim();
  if(!/^\d+$/.test(id)){status('Enter a numeric TMDB ID.');return}
@@ -78,14 +78,6 @@ $('resolve').onclick=async()=>{
   status('Availability response received. Use Load embed player to test playback; this endpoint does not expose a direct HLS URL.');
  }catch(e){status('Resolve failed: '+e.message);$('streamUrl').textContent='Resolve failed.'}
  finally{b.disabled=false}
-};
-$('loadList').onclick=async()=>{
- status('Loading provider list…');$('providers').textContent='Loading…';
- try{const r=await fetch('/api/list');const parsed=await readResponse(r);const data=parsed.data;$('providers').textContent=json({httpStatus:r.status,contentType:r.headers.get('content-type'),data,raw:parsed.raw});if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
- const items=[];
- if(items.length){const sel=$('provider'),current=sel.value;sel.replaceChildren(...items.map(item=>{const name=typeof item==='string'?item:(item.id||item.name||item.provider);const opt=document.createElement('option');opt.value=name;opt.textContent=name;return opt}));if([...sel.options].some(o=>o.value===current))sel.value=current}
- status('Provider list is not part of the VidSrc embed workflow.');
- }catch(e){status('Provider-list request failed: '+e.message)}
 };
 $('kind').onchange=()=>{const tv=$('kind').value==='tv';$('season').disabled=!tv;$('episode').disabled=!tv};
 $('kind').dispatchEvent(new Event('change'));
@@ -133,7 +125,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(result.status, { "content-type": result.contentType, "cache-control": "no-store", "x-content-type-options": "nosniff" });
       res.end(result.body);
     } catch (e) {
-      send(res, 502, "application/json; charset=utf-8", JSON.stringify({ error: "ezvidapi request failed", detail: e instanceof Error ? e.message : String(e), attemptedPath: path }));
+      send(res, 502, "application/json; charset=utf-8", JSON.stringify({ error: "VidSrc request failed", detail: e instanceof Error ? e.message : String(e), attemptedPath: path }));
     }
     return;
   }
