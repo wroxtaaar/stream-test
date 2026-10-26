@@ -52,6 +52,7 @@ const $=id=>document.getElementById(id);
 let hls=null;
 const status=s=>$('status').textContent=s;
 const json=(value)=>JSON.stringify(value,null,2);
+async function readResponse(r){const raw=await r.text();try{return {data:JSON.parse(raw),raw}}catch{return {data:{nonJsonResponse:raw},raw}}}
 function stopVideo(){if(hls){hls.destroy();hls=null}$('video').pause();$('video').removeAttribute('src');$('video').load()}
 function setEmbed(){
  const id=$('id').value.trim(),kind=$('kind').value,s=$('season').value.trim(),ep=$('episode').value.trim();
@@ -69,7 +70,7 @@ $('resolve').onclick=async()=>{
  const b=$('resolve');b.disabled=true;status('Requesting HLS stream from ezvidapi…');$('raw').textContent='Loading…';$('streamUrl').textContent='Resolving…';stopVideo();
  try{
   const q=new URLSearchParams({kind,id,provider});if(kind==='tv'){q.set('season',s);q.set('episode',ep)}
-  const r=await fetch('/api/resolve?'+q);const data=await r.json();$('raw').textContent=json({httpStatus:r.status,data});
+  const r=await fetch('/api/resolve?'+q);const parsed=await readResponse(r);const data=parsed.data;$('raw').textContent=json({httpStatus:r.status,contentType:r.headers.get('content-type'),data,raw:parsed.raw});
   if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
   const u=data.stream_url||data.streamUrl||data.url||data.src||data.m3u8||'';
   if(typeof u!=='string'||!/^https?:\/\//i.test(u)){$('streamUrl').textContent='No recognized direct URL field. Inspect the raw response; provider may return a different shape.';status('API responded, but no known direct URL field was found.');return}
@@ -84,7 +85,7 @@ $('resolve').onclick=async()=>{
 };
 $('loadList').onclick=async()=>{
  status('Loading provider list…');$('providers').textContent='Loading…';
- try{const r=await fetch('/api/list');const data=await r.json();$('providers').textContent=json({httpStatus:r.status,data});if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
+ try{const r=await fetch('/api/list');const parsed=await readResponse(r);const data=parsed.data;$('providers').textContent=json({httpStatus:r.status,contentType:r.headers.get('content-type'),data,raw:parsed.raw});if(!r.ok)throw new Error(data.error||('HTTP '+r.status));
  const items=Array.isArray(data)?data:(data.providers||data.results||data.data||[]);
  if(items.length){const sel=$('provider'),current=sel.value;sel.replaceChildren(...items.map(item=>{const name=typeof item==='string'?item:(item.id||item.name||item.provider);const opt=document.createElement('option');opt.value=name;opt.textContent=name;return opt}));if([...sel.options].some(o=>o.value===current))sel.value=current}
  status('Provider-list request completed: HTTP '+r.status+'. Check the response to confirm its schema.');
