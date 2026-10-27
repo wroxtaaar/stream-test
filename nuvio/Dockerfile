@@ -5,8 +5,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 WORKDIR /app
 
-# Puppeteer is a dependency upstream. Download its browser during build, and
-# include system libraries commonly required by Chromium on Debian.
+# Puppeteer is a dependency upstream. Use system Chromium and include its runtime libraries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl dumb-init \
     chromium \
