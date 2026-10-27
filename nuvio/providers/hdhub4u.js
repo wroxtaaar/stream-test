@@ -117,7 +117,7 @@ const HEADERS = {
 // --- Proxy Wrapper Function ---
 const RETRYABLE_NETWORK_CODES = new Set([
     'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN',
-    'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'
+    'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'EPROTO'
 ]);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
