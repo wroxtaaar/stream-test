@@ -644,7 +644,7 @@ async function search(query) {
 
         const absoluteUrl = toAbsoluteHttpUrl(url);
         if (title && absoluteUrl && absoluteUrl.length > 10) {
-            results.push({ title, url: absoluteUrl, poster });
+            if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
         }
     });
 
@@ -659,7 +659,7 @@ async function search(query) {
 
             if (title && url && url.length > 10) {
                 const absoluteUrl = toAbsoluteHttpUrl(url);
-                results.push({ title, url: absoluteUrl, poster });
+                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
             }
         });
     }
@@ -675,7 +675,7 @@ async function search(query) {
 
             if (title && url) {
                 const absoluteUrl = toAbsoluteHttpUrl(url);
-                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
+                if (absoluteUrl) if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
             }
         });
     }
@@ -691,7 +691,7 @@ async function search(query) {
 
             if (title && url) {
                 const absoluteUrl = toAbsoluteHttpUrl(url);
-                results.push({ title, url: absoluteUrl, poster });
+                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
             }
         });
     }
