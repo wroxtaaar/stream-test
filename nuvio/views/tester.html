@@ -55,7 +55,98 @@ async function checkHealth(){try{const r=await fetch(base()+'/health');if(!r.ok)
 $('connect').onclick=checkHealth;
 $('searchForm').onsubmit=async e=>{e.preventDefault();const key=$('tmdbKey').value.trim(),q=$('query').value.trim();if(!key){message('searchMsg','Enter your TMDB API key above. It stays in this page’s memory only.','error');return}const btn=$('searchBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Searching';$('searchResults').innerHTML='';clearMessage('searchMsg');try{const r=await fetch('https://api.themoviedb.org/3/search/multi?api_key='+encodeURIComponent(key)+'&include_adult=false&query='+encodeURIComponent(q));const j=await r.json();if(!r.ok)throw Error(j.status_message||'TMDB HTTP '+r.status);const items=(j.results||[]).filter(x=>['movie','tv'].includes(x.media_type));if(!items.length){message('searchMsg','No movies or series found. Try another title.');return}$('searchResults').innerHTML=items.slice(0,18).map((x,i)=>'<article class="movie"><img class="poster" src="'+safeText(image(x)||'')+'" alt="" onerror="this.style.visibility=\'hidden\'"><div class="moviebody"><div class="movietitle">'+safeText(x.title||x.name)+'</div><div class="meta">'+safeText(year(x))+' · '+(x.media_type==='tv'?'TV series':'Movie')+'</div><div class="meta">TMDB '+safeText(x.vote_average?Number(x.vote_average).toFixed(1):'—')+'</div><button type="button" data-index="'+i+'">Select title</button></div></article>').join('');window.searchItems=items.slice(0,18);$('searchResults').querySelectorAll('button').forEach(b=>b.onclick=()=>selectTitle(window.searchItems[Number(b.dataset.index)]));message('searchMsg','Found '+items.length+' results. Select the exact title and year.','ok')}catch(err){message('searchMsg','Search failed: '+err.message,'error')}finally{btn.disabled=false;btn.textContent='Search titles'}};
 async function selectTitle(item){selected=item;selectedExternal=null;$('selectedPanel').classList.remove('hidden');$('selectedInfo').innerHTML='<div class="movietitle">'+safeText(item.title||item.name)+' ('+safeText(year(item))+')</div><div class="meta">'+(item.media_type==='tv'?'TV series':'Movie')+' · TMDB ID '+item.id+'</div>';$('episodeFields').classList.toggle('hidden',item.media_type!=='tv');$('streamResults').innerHTML='';$('selectedHint').textContent='Resolving IMDb ID…';$('getStreams').disabled=true;try{const key=$('tmdbKey').value.trim();const r=await fetch('https://api.themoviedb.org/3/'+(item.media_type==='tv'?'tv':'movie')+'/'+item.id+'/external_ids?api_key='+encodeURIComponent(key));const j=await r.json();if(!r.ok)throw Error(j.status_message||'TMDB HTTP '+r.status);selectedExternal=j.imdb_id;if(!selectedExternal)throw Error('No IMDb ID is available for this title.');$('selectedHint').textContent='IMDb ID: '+selectedExternal+' · Ready';$('getStreams').disabled=false;$('selectedPanel').scrollIntoView({behavior:'smooth',block:'start'})}catch(err){$('selectedHint').textContent=err.message;message('streamMsg','Could not resolve IMDb ID: '+err.message,'error')}}
-$('getStreams').onclick=async()=>{if(!selected||!selectedExternal)return;const btn=$('getStreams');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Fetching streams';$('streamResults').innerHTML='';clearMessage('streamMsg');try{let path='/stream/'+(selected.media_type==='tv'?'series':'movie')+'/'+encodeURIComponent(selectedExternal);if(selected.media_type==='tv'){const s=Math.max(1,Number($('season').value)||1),ep=Math.max(1,Number($('episode').value)||1);path+=':'+s+':'+ep}const r=await fetch(base()+path+'.json');const j=await r.json();if(!r.ok)throw Error('Addon HTTP '+r.status);const streams=Array.isArray(j.streams)?j.streams:[];if(!streams.length){message('streamMsg','No streams returned for this title/episode. Check provider logs on the VPS.','error');return}message('streamMsg','Found '+streams.length+' stream entries. Playback is not guaranteed until tested.','ok');$('streamResults').innerHTML=streams.map((s,i)=>'<article class="stream"><div class="streambody"><div class="streamname">'+safeText(s.name||'Stream '+(i+1))+'</div><div class="streamtitle">'+safeText(s.title||'Untitled stream')+'</div><div class="meta">Type: '+safeText(s.type||'unknown')+(s.behaviorHints&&s.behaviorHints.bingeGroup?' · '+safeText(s.behaviorHints.bingeGroup):'')+'</div><div class="field hidden" id="urlField'+i+'" style="margin-top:10px;width:100%"><label for="urlText'+i+'">Stream URL (select and copy manually if clipboard is blocked)</label><input id="urlText'+i+'" type="text" readonly value="'+safeText(s.url||'')+'" onclick="this.select()"></div></div><div class="streamactions"><button type="button" data-mx="'+i+'">▶ Play in MX Player</button><button type="button" data-copy="'+i+'" class="secondary">Copy URL</button><a class="linkbtn" href="'+safeText(s.url||'#')+'" target="_blank" rel="noopener noreferrer">Open URL ↗</a></div></article>').join('');window.currentStreams=streams;$('streamResults').querySelectorAll('[data-mx]').forEach(b=>b.onclick=()=>{const url=window.currentStreams[Number(b.dataset.mx)]?.url;if(!url){message('streamMsg','This stream has no URL.','error');return}if(!/^https?:\\/\\//i.test(url)){window.open(url,'_blank','noopener');return}if(!/Android/i.test(navigator.userAgent)){window.open(url,'_blank','noopener');message('streamMsg','On Android, tap Play in MX Player to hand this URL to MX Player. On this device, the direct URL was opened instead.');return}const clean=url.replace(/^https?:\\/\\//i,'');const scheme=url.match(/^https:/i)?'https':'http';const intent='intent://'+clean+'#Intent;scheme='+scheme+';package=com.mxtech.videoplayer.ad;type=video/*;S.browser_fallback_url='+encodeURIComponent(url)+';end';window.location.href=intent});$('streamResults').querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{const i=Number(b.dataset.copy),url=window.currentStreams[i]?.url;try{if(!url)throw Error('No URL');if(!navigator.clipboard?.writeText)throw Error('Clipboard API unavailable');await navigator.clipboard.writeText(url);b.textContent='Copied';message('streamMsg','Stream URL copied to clipboard.','ok')}catch{const field=$('urlField'+i);field.classList.remove('hidden');const input=$('urlText'+i);input.focus();input.select();message('streamMsg','Clipboard access was blocked. The URL is shown in a selectable field below the stream details; long-press or select all to copy it.','error')}})}catch(err){message('streamMsg','Stream request failed: '+err.message,'error')}finally{btn.disabled=false;btn.textContent='Find streams'}};
+$('getStreams').onclick = async () => {
+  if (!selected || !selectedExternal) return;
+  const btn = $('getStreams');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Fetching streams';
+  $('streamResults').innerHTML = '';
+  clearMessage('streamMsg');
+  try {
+    let path = '/stream/' + (selected.media_type === 'tv' ? 'series' : 'movie') + '/' + encodeURIComponent(selectedExternal);
+    if (selected.media_type === 'tv') {
+      const season = Math.max(1, Number($('season').value) || 1);
+      const episode = Math.max(1, Number($('episode').value) || 1);
+      path += ':' + season + ':' + episode;
+    }
+    const response = await fetch(base() + path + '.json');
+    const data = await response.json();
+    if (!response.ok) throw Error('Addon HTTP ' + response.status);
+    const streams = Array.isArray(data.streams) ? data.streams : [];
+    if (!streams.length) {
+      message('streamMsg', 'No streams returned for this title/episode. Check provider logs on the VPS.', 'error');
+      return;
+    }
+    message('streamMsg', 'Found ' + streams.length + ' stream entries. Playback is not guaranteed until tested.', 'ok');
+    $('streamResults').innerHTML = streams.map((stream, index) =>
+      '<article class="stream">' +
+        '<div class="streambody">' +
+          '<div class="streamname">' + safeText(stream.name || 'Stream ' + (index + 1)) + '</div>' +
+          '<div class="streamtitle">' + safeText(stream.title || 'Untitled stream') + '</div>' +
+          '<div class="meta">Type: ' + safeText(stream.type || 'unknown') +
+            (stream.behaviorHints && stream.behaviorHints.bingeGroup ? ' · ' + safeText(stream.behaviorHints.bingeGroup) : '') +
+          '</div>' +
+          '<div class="field hidden" id="urlField' + index + '" style="margin-top:10px;width:100%">' +
+            '<label for="urlText' + index + '">Stream URL (select and copy manually if clipboard is blocked)</label>' +
+            '<input id="urlText' + index + '" type="text" readonly value="' + safeText(stream.url || '') + '" onclick="this.select()">' +
+          '</div>' +
+        '</div>' +
+        '<div class="streamactions">' +
+          '<button type="button" data-mx="' + index + '">▶ Play in MX Player</button>' +
+          '<button type="button" data-copy="' + index + '" class="secondary">Copy URL</button>' +
+          '<a class="linkbtn" href="' + safeText(stream.url || '#') + '" target="_blank" rel="noopener noreferrer">Open URL ↗</a>' +
+        '</div>' +
+      '</article>'
+    ).join('');
+    window.currentStreams = streams;
+    $('streamResults').querySelectorAll('[data-mx]').forEach(button => {
+      button.onclick = () => {
+        const url = window.currentStreams[Number(button.dataset.mx)]?.url;
+        if (!url) {
+          message('streamMsg', 'This stream has no URL.', 'error');
+          return;
+        }
+        if (!/^https?:\/\//i.test(url) || !/Android/i.test(navigator.userAgent)) {
+          window.open(url, '_blank', 'noopener');
+          if (!/Android/i.test(navigator.userAgent)) {
+            message('streamMsg', 'On Android, tap Play in MX Player to hand this URL to MX Player. On this device, the direct URL was opened instead.');
+          }
+          return;
+        }
+        const cleanUrl = url.replace(/^https?:\/\//i, '');
+        const scheme = /^https:/i.test(url) ? 'https' : 'http';
+        const intentUrl = 'intent://' + cleanUrl + '#Intent;scheme=' + scheme +
+          ';package=com.mxtech.videoplayer.ad;type=video/*;S.browser_fallback_url=' +
+          encodeURIComponent(url) + ';end';
+        window.location.href = intentUrl;
+      };
+    });
+    $('streamResults').querySelectorAll('[data-copy]').forEach(button => {
+      button.onclick = async () => {
+        const index = Number(button.dataset.copy);
+        const url = window.currentStreams[index]?.url;
+        try {
+          if (!url || !navigator.clipboard?.writeText) throw Error('Clipboard unavailable');
+          await navigator.clipboard.writeText(url);
+          button.textContent = 'Copied';
+          message('streamMsg', 'Stream URL copied to clipboard.', 'ok');
+        } catch {
+          const field = $('urlField' + index);
+          const input = $('urlText' + index);
+          field.classList.remove('hidden');
+          input.focus();
+          input.select();
+          message('streamMsg', 'Clipboard access was blocked. The URL is now shown in a selectable field below the stream details.', 'error');
+        }
+      };
+    });
+  } catch (error) {
+    message('streamMsg', 'Stream request failed: ' + error.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Find streams';
+  }
+};
 checkHealth();
 </script>
 </body>
