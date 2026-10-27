@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { getWithRetry } = require('../utils/requestRetry');
 const fs = require('fs').promises;
 const path = require('path');
 const cheerio = require('cheerio');
@@ -710,7 +711,7 @@ async function getTopMoviesStreams(tmdbId, mediaType = 'movie', season = null, e
         console.log(`[TopMovies Cache] MISS for key: ${cacheKey}. Fetching from source.`);
         // 2. Get TMDB info
         const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}`;
-        const tmdbResponse = await axios.get(tmdbUrl);
+        const tmdbResponse = await getWithRetry(tmdbUrl, { timeout: 12000 });
         const mediaInfo = {
           title: tmdbResponse.data.title,
           year: parseInt((tmdbResponse.data.release_date || '').split('-')[0], 10)
