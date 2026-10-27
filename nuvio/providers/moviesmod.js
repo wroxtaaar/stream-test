@@ -4,6 +4,7 @@
  */
 
 const axios = require('axios');
+const { getWithRetry } = require('../utils/requestRetry');
 const cheerio = require('cheerio');
 const FormData = require('form-data');
 const { CookieJar } = require('tough-cookie');
@@ -1148,9 +1149,9 @@ async function getMoviesModStreams(tmdbId, mediaType, seasonNum = null, episodeN
             // We need to fetch title and year from TMDB API
             const TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
 
-            const { default: fetch } = await import('node-fetch');
             const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === 'tv' ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
-            const tmdbDetails = await (await fetch(tmdbUrl)).json();
+            const tmdbResponse = await getWithRetry(tmdbUrl, { timeout: 12000 });
+            const tmdbDetails = tmdbResponse.data;
 
             const title = mediaType === 'tv' ? tmdbDetails.name : tmdbDetails.title;
             const year = mediaType === 'tv' ? tmdbDetails.first_air_date?.substring(0, 4) : tmdbDetails.release_date?.substring(0, 4);
