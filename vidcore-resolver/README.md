@@ -1,34 +1,34 @@
 # VidCore Stream Resolver Lab
 
-An isolated sandbox for evaluating the VidCore HLS resolver separately from the existing VidSrc test harness. This does not replace the root app and does not change the root `docker-compose.yml`.
+An isolated sandbox for evaluating the VidCore HLS resolver separately from the existing VidSrc test harness. It does not replace the root app or change the root `docker-compose.yml`.
 
-## Current state
-
-The source and deployment wiring are contained under `vidcore-resolver/`. The service has a dedicated container name and binds to host port **3002** while listening on container port **3000**.
+The resolver source is pinned as a submodule at `vidcore-resolver/upstream`. Initialize it before building.
 
 ## Run on the VPS
 
-From the repository root, after pulling the `feature/vidcore-resolver` branch:
+From the repository root, after switching to the `feature/vidcore-resolver` branch:
 
 ```bash
+git submodule sync -- vidcore-resolver/upstream
+git submodule update --init --depth 1 vidcore-resolver/upstream
+
 docker compose -f vidcore-resolver/compose.yml up -d --build
 docker compose -f vidcore-resolver/compose.yml ps
 docker compose -f vidcore-resolver/compose.yml logs --tail=80 vidcore-resolver
-curl -fsS http://127.0.0.1:3002/health
+curl -fsS http://127.0.0.1:3002/
 ```
 
-Open `http://YOUR_VPS_IP:3002` to access the resolver UI.
+Open `http://YOUR_VPS_IP:3002` for the resolver UI.
 
 ## Configuration
 
-- `PORT=3000` inside the container; host port defaults to `3002`.
-- `VIDCORE_ORIGIN` defaults to `https://vidcore.io`.
-- `HOST=0.0.0.0` makes the service reachable through Docker's published port.
-
-Override the host port with `VIDCORE_HOST_PORT=3002` if needed.
+- Container port: `3000`.
+- Host port: `3002` by default. Override using `VIDCORE_HOST_PORT=3002`.
+- Upstream origin: `VIDCORE_ORIGIN` (defaults to `https://vidcore.io`).
+- The container listens on `0.0.0.0`.
 
 ## Safety and limitations
 
-This experimental resolver depends on a third-party upstream whose routes, session flow, player code and availability may change without notice. A successful resolve does not guarantee that playback will work. Use only content you are authorized to access, and do not expose this test UI publicly without suitable access controls and HTTPS.
+This experimental resolver depends on a third-party upstream whose routes, session flow, player code, and availability may change without notice. Successful resolution does not guarantee playback. Use only content you are authorized to access, and do not expose this test UI publicly without access controls and HTTPS.
 
-The resolver returns provider-origin media links and may proxy media segments. Treat those URLs as sensitive, ephemeral values; do not log or persist resolved stream tokens longer than necessary.
+The resolver can proxy media and return ephemeral upstream URLs. Avoid logging or persisting resolved stream URLs longer than necessary.
