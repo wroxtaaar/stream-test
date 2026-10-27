@@ -4,8 +4,8 @@ This repository contains isolated stream-provider experiments. Each provider tes
 
 ## Nuvio Streams test deployment
 
-See [`nuvio/README.md`](nuvio/README.md) for the separate Docker wrapper deployment and current upstream import status.
+See [nuvio/README.md](nuvio/README.md) for the Docker wrapper deployment instructions and current upstream import status.
 
-> The current Nuvio wrapper is not a functional stream resolver until the upstream add-on is imported and wired up. Its health check verifies only that the wrapper starts.
+> **Status:** The current Nuvio wrapper is runnable but is not a functional stream resolver. It must be wired to the full upstream add-on source before actual streams can be resolved.
 
-The original Stream Test app is still available at the repository root.
+The original Stream Test app remains at the repository root.
