@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/linkAvailability.test.js"
+    "test": "node test/linkAvailability.test.js && node test/tmdbRetry.test.js"
   },
   "dependencies": {
     "aromanize": "^0.1.5",
