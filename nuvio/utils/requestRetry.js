@@ -2,7 +2,7 @@ const axios = require('axios');
 
 const RETRYABLE_CODES = new Set([
     'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN',
-    'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'
+    'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'EPROTO'
 ]);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
