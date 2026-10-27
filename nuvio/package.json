@@ -1,0 +1,9 @@
+{
+  "name": "stream-test-nuvio-addon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated Nuvio Streams add-on test deployment",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
