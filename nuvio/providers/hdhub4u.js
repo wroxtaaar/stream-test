@@ -115,15 +115,49 @@ const HEADERS = {
 };
 
 // --- Proxy Wrapper Function ---
+const RETRYABLE_NETWORK_CODES = new Set([
+    'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EAI_AGAIN',
+    'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE'
+]);
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 const makeRequest = async (url, options = {}) => {
-    if (HDHUB4U_PROXY_URL) {
-        const proxiedUrl = `${HDHUB4U_PROXY_URL}?url=${encodeURIComponent(url)}`;
-        log(`[HDHub4u] Using proxy for: ${url}`);
-        return axios.get(proxiedUrl, options);
-    } else {
-        return axios.get(url, options);
+    const requestUrl = HDHUB4U_PROXY_URL
+        ? `${HDHUB4U_PROXY_URL}${HDHUB4U_PROXY_URL.includes('?') ? '&' : '?'}url=${encodeURIComponent(url)}`
+        : url;
+    const attempts = Number.isInteger(options.retryAttempts)
+        ? Math.max(1, Math.min(options.retryAttempts, 3))
+        : 3;
+    const requestOptions = { ...options };
+    delete requestOptions.retryAttempts;
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            if (HDHUB4U_PROXY_URL) log(`[HDHub4u] Using proxy for: ${url}`);
+            return await axios.get(requestUrl, requestOptions);
+        } catch (error) {
+            const status = error.response && error.response.status;
+            const retryable = RETRYABLE_NETWORK_CODES.has(error.code) ||
+                status === 429 || (status >= 500 && status <= 599);
+            if (!retryable || attempt === attempts) throw error;
+            const delay = 250 * (2 ** (attempt - 1));
+            logWarn(`[HDHub4u] Request failed (${error.code || status || error.message}); retrying ${attempt + 1}/${attempts} in ${delay}ms`);
+            await sleep(delay);
+        }
     }
 };
+
+function toAbsoluteHttpUrl(value, base = MAIN_URL) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        const parsed = new URL(value.trim(), base);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
 
 // =================================================================================
 // UTILITY FUNCTIONS
@@ -293,6 +327,12 @@ async function getRedirectLinks(url) {
  * Main extractor dispatcher.
  */
 async function loadExtractor(url, referer = MAIN_URL) {
+    const absoluteUrl = toAbsoluteHttpUrl(url, referer);
+    if (!absoluteUrl) {
+        logWarn(`[HDHub4u] Skipping malformed extractor URL: ${String(url).slice(0, 180)}`);
+        return [];
+    }
+    url = absoluteUrl;
     const hostname = new URL(url).hostname;
 
     // Some links from the main site are redirectors that need to be resolved first.
@@ -602,8 +642,9 @@ async function search(query) {
         // Get poster from sibling figure element
         const poster = element.prev('figure').find('img').attr('src') || element.parent().find('figure img').attr('src');
 
-        if (title && url && url.length > 10) {
-            results.push({ title, url, poster });
+        const absoluteUrl = toAbsoluteHttpUrl(url);
+        if (title && absoluteUrl && absoluteUrl.length > 10) {
+            results.push({ title, url: absoluteUrl, poster });
         }
     });
 
@@ -617,7 +658,7 @@ async function search(query) {
             const poster = element.find('figure img, img').first().attr('src');
 
             if (title && url && url.length > 10) {
-                const absoluteUrl = url.startsWith('http') ? url : `${MAIN_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+                const absoluteUrl = toAbsoluteHttpUrl(url);
                 results.push({ title, url: absoluteUrl, poster });
             }
         });
@@ -633,7 +674,7 @@ async function search(query) {
             const poster = linkEl.find('img').attr('src') || linkEl.find('img').attr('data-src');
 
             if (title && url) {
-                const absoluteUrl = url.startsWith('http') ? url : `${MAIN_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+                const absoluteUrl = toAbsoluteHttpUrl(url);
                 results.push({ title, url: absoluteUrl, poster });
             }
         });
@@ -649,7 +690,7 @@ async function search(query) {
             const poster = element.find('img').first().attr('src') || element.find('img').first().attr('data-src');
 
             if (title && url) {
-                const absoluteUrl = url.startsWith('http') ? url : `${MAIN_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+                const absoluteUrl = toAbsoluteHttpUrl(url);
                 results.push({ title, url: absoluteUrl, poster });
             }
         });
