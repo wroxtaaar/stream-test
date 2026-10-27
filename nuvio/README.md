@@ -1,47 +1,28 @@
 # Nuvio Streams test deployment
 
-This folder contains a containerized copy of [tapframe/NuvioStreamsAddon](https://github.com/tapframe/NuvioStreamsAddon) for isolated VPS testing.
+This folder is a separate Docker deployment target for [Nuvio Streams](https://github.com/tapframe/NuvioStreamsAddon), independent of the existing Stream Test app.
 
-## Requirements
+> **Status:** This branch currently contains a runnable container wrapper and deployment configuration, not the complete upstream add-on/provider code. It does not resolve streams yet. `/health` checks the wrapper only. The upstream repository is archived, so provider functionality must be audited and tested before use.
 
-- Docker Engine and Docker Compose plugin
-- A TMDB API key for movie/TV metadata
-- Use only sources/content you are authorized to access
-
-## Run
+## Deploy on the VPS
 
 ```bash
 cd ~/stream-test/nuvio
 cp .env.example .env
-nano .env
+nano .env  # Set TMDB_API_KEY if available
 docker compose up -d --build
 docker compose ps
-docker compose logs --tail=100 nuvio-streams
+curl -fsS http://127.0.0.1:17000/health
+curl -fsS http://127.0.0.1:17000/_deployment-info
 ```
 
-Set `TMDB_API_KEY` in `.env`. The container listens on port 7000; by default, the VPS host port is 17000. Open:
+Default wrapper URL: `http://YOUR_VPS_IP:17000/`. The container listens on port 7000; host port 17000 is published by Compose. Change the left-hand side of the port mapping if 17000 is occupied.
 
-- UI / add-on landing page: `http://YOUR_VPS_IP:17000/`
-- Manifest: `http://YOUR_VPS_IP:17000/manifest.json`
-
-If port 17000 is in use, set `NUVIO_HOST_PORT=17001` before starting. If using a cloud firewall, only open the chosen port if you intend to access it remotely. For a public deployment, put it behind HTTPS and access control; do not expose secrets or personal cookies.
-
-## Health checks
+## Logs and stop
 
 ```bash
-curl -i http://127.0.0.1:17000/
-curl -i http://127.0.0.1:17000/manifest.json
-docker inspect --format '{{json .State.Health}}' stream-test-nuvio-streams
+docker compose logs --tail=100 -f nuvio-streams
+docker compose down
 ```
 
-The included upstream project is archived. A successful container start does not guarantee that third-party providers currently resolve streams. Provider availability and regional access can change.
-
-## Updating
-
-```bash
-git pull --ff-only
-cd nuvio
-docker compose up -d --build
-```
-
-`.env` and `cookies.txt` must remain local and should never be committed.
+Keep `.env`, cookies and credentials private. For remote access use HTTPS and access control. Only access content you are authorized to access.
