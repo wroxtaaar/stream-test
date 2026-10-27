@@ -12,6 +12,8 @@ const DEFAULTS = {
     concurrency: 4
 };
 
+const PIXELDRAIN_HOSTS = new Set(['pixeldrain.com', 'pixeldrain.dev', 'pixeldrain.net']);
+
 function configuredDuration(name, fallback) {
     const rawValue = process.env[name];
     if (rawValue === undefined) return fallback;
@@ -33,7 +35,7 @@ function configuredConcurrency(name, fallback) {
 }
 
 function getPixeldrainFileId(url) {
-    const match = url.pathname.match(/\/(?:api\/)?(?:file|u)\/([A-Za-z0-9_-]+)/i);
+    const match = url.pathname.match(/^\/(?:api\/)?(?:file|u)\/([A-Za-z0-9_-]+)(?:\/info)?\/?$/i);
     return match ? match[1] : null;
 }
 
@@ -72,6 +74,64 @@ function isPixeldrainNotFound(status, data) {
         typeof value === 'string' &&
         ['not_found', 'file_not_found'].includes(value.toLowerCase())
     );
+}
+
+async function extractPixeldrainStream(link, request, onError = () => {}, requestOptions = {}) {
+    if (typeof link !== 'string') {
+        return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+    }
+
+    let url;
+    try {
+        url = new URL(link);
+    } catch {
+        return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+    }
+
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (url.protocol !== 'https:' || !PIXELDRAIN_HOSTS.has(hostname)) {
+        return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+    }
+
+    const fileId = getPixeldrainFileId(url);
+    if (!fileId) {
+        return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+    }
+
+    const infoUrl = `https://${hostname}/api/file/${encodeURIComponent(fileId)}/info`;
+    const directUrl = `https://${hostname}/api/file/${encodeURIComponent(fileId)}?download`;
+    const fallback = [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+
+    try {
+        const response = await request(infoUrl, requestOptions);
+        const info = response.data;
+        if (isPixeldrainNotFound(response.status, info)) return [];
+
+        if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+            onError(new Error(`Unexpected Pixeldrain info response status: ${response.status}`));
+            return fallback;
+        }
+
+        if (classifyPixeldrain(response.status, info).status !== 'available') {
+            onError(new Error('Pixeldrain info response did not confirm an available file.'));
+            return fallback;
+        }
+
+        const fileInfo = info?.value && typeof info.value === 'object' ? info.value : info;
+        const name = fileInfo?.name || '';
+        const qualityMatch = name.match(/(\d{3,4})p/);
+        return [{
+            source: 'Pixeldrain',
+            quality: qualityMatch ? qualityMatch[0] : 'Unknown',
+            url: directUrl,
+            name,
+            size: fileInfo?.size || 0
+        }];
+    } catch (error) {
+        if (isPixeldrainNotFound(error.response?.status, error.response?.data)) return [];
+        onError(error);
+        return fallback;
+    }
 }
 
 function identifyLink(rawUrl) {
@@ -470,6 +530,7 @@ module.exports = {
     LinkAvailabilityService,
     classifyGoogleDrive,
     classifyPixeldrain,
+    extractPixeldrainStream,
     identifyLink,
     isPixeldrainNotFound,
     mapWithConcurrency,

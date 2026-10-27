@@ -11,8 +11,7 @@ const { findBestMatch } = require('string-similarity');
 const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
-const { extractPixeldrainFileId } = require('../utils/linkResolver');
-const { defaultLinkAvailability, isPixeldrainNotFound } = require('../utils/linkAvailability');
+const { defaultLinkAvailability, extractPixeldrainStream } = require('../utils/linkAvailability');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.HDHUB4U_DEBUG === 'true';
@@ -323,7 +322,8 @@ async function loadExtractor(url, referer = MAIN_URL) {
     if (hostname.includes('hubstream')) {
         return hubStreamExtractor(url, referer);
     }
-    if (hostname.includes('pixeldrain')) {
+    const pixeldrainHostname = hostname.toLowerCase().replace(/^www\./, '');
+    if (['pixeldrain.com', 'pixeldrain.dev', 'pixeldrain.net'].includes(pixeldrainHostname)) {
         return pixelDrainExtractor(url);
     }
     if (hostname.includes('streamtape')) {
@@ -347,55 +347,15 @@ async function loadExtractor(url, referer = MAIN_URL) {
  * Extract direct download link from Pixeldrain.
  */
 async function pixelDrainExtractor(link) {
-    try {
-        const fileId = extractPixeldrainFileId(link);
-        if (!fileId) {
-            return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
+    return extractPixeldrainStream(
+        link,
+        (url, options) => makeRequest(url, options),
+        error => logWarn(`[HDHub4u] Could not fetch Pixeldrain file info: ${error.message}`),
+        {
+            httpsAgent: agent,
+            validateStatus: () => true
         }
-
-        const infoUrl = `https://pixeldrain.com/api/file/${fileId}/info`;
-        let fileInfo = { name: '', quality: 'Unknown', size: 0 };
-
-        try {
-            const response = await makeRequest(infoUrl, {
-                httpsAgent: agent,
-                validateStatus: () => true
-            });
-            const info = response.data;
-            if (isPixeldrainNotFound(response.status, info)) {
-                logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
-                return [];
-            }
-            const pixeldrainInfo = info?.value && typeof info.value === 'object' ? info.value : info;
-            if (pixeldrainInfo && pixeldrainInfo.name) {
-                fileInfo.name = pixeldrainInfo.name;
-                fileInfo.size = pixeldrainInfo.size || 0;
-
-                const qualityMatch = pixeldrainInfo.name.match(/(\d{3,4})p/);
-                if (qualityMatch) {
-                    fileInfo.quality = qualityMatch[0];
-                }
-            }
-        } catch (e) {
-            if (isPixeldrainNotFound(e.response?.status, e.response?.data)) {
-                logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
-                return [];
-            }
-            logWarn(`[HDHub4u] Could not fetch file info for ${fileId}:`, e.message);
-        }
-
-        const directUrl = `https://pixeldrain.com/api/file/${fileId}?download`;
-        return [{
-            source: 'Pixeldrain',
-            quality: fileInfo.quality,
-            url: directUrl,
-            name: fileInfo.name,
-            size: fileInfo.size,
-        }];
-    } catch (e) {
-        console.error('[HDHub4u] Pixeldrain extraction failed', e.message);
-        return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
-    }
+    );
 }
 
 /**

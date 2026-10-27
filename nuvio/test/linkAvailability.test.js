@@ -6,6 +6,7 @@ const {
     LinkAvailabilityService,
     classifyGoogleDrive,
     classifyPixeldrain,
+    extractPixeldrainStream,
     identifyLink
 } = require('../utils/linkAvailability');
 
@@ -79,6 +80,166 @@ test('Pixeldrain not_found response body is conclusively missing', () => {
 
 test('Pixeldrain file_not_found response body is conclusively missing', () => {
     assert.strictEqual(classifyPixeldrain(200, { success: false, value: 'file_not_found' }).status, 'not_found');
+});
+
+test('Pixeldrain extractor preserves supported source host in metadata and download URLs', async () => {
+    for (const host of ['pixeldrain.com', 'pixeldrain.dev', 'pixeldrain.net']) {
+        const requestUrls = [];
+        const streams = await extractPixeldrainStream(
+            `https://www.${host}/file/mock-file-id`,
+            async url => {
+                requestUrls.push(url);
+                return response(200, {
+                    success: true,
+                    name: 'Example.1080p.mkv',
+                    size: 2048,
+                    availability: ''
+                });
+            }
+        );
+
+        assert.deepStrictEqual(requestUrls, [
+            `https://${host}/api/file/mock-file-id/info`
+        ]);
+        assert.strictEqual(streams.length, 1);
+        assert.strictEqual(streams[0].url, `https://${host}/api/file/mock-file-id?download`);
+        assert.strictEqual(streams[0].quality, '1080p');
+    }
+});
+
+test('Pixeldrain extractor suppresses explicit missing-file responses', async () => {
+    const streams = await extractPixeldrainStream(
+        'https://pixeldrain.dev/file/mock-missing-id',
+        async () => response(404, { success: false, value: 'not_found' })
+    );
+    assert.deepStrictEqual(streams, []);
+});
+
+test('Pixeldrain extractor falls back to original URL for unexpected HTTP responses', async () => {
+    for (const status of [503, 403]) {
+        const originalUrl = `https://pixeldrain.net/file/mock-status-${status}`;
+        const errors = [];
+        const streams = await extractPixeldrainStream(
+            originalUrl,
+            async () => response(status, { success: false, value: 'forbidden' }),
+            error => errors.push(error.message)
+        );
+        assert.deepStrictEqual(streams, [{
+            source: 'Pixeldrain',
+            quality: 'Unknown',
+            url: originalUrl
+        }]);
+        assert.strictEqual(errors.length, 1);
+    }
+});
+
+test('Pixeldrain extractor falls back when a successful response body is unrecognized', async () => {
+    const originalUrl = 'https://pixeldrain.com/file/mock-unexpected-body';
+    const streams = await extractPixeldrainStream(
+        originalUrl,
+        async () => response(200, { message: 'not a file info response' }),
+        () => {}
+    );
+    assert.deepStrictEqual(streams, [{
+        source: 'Pixeldrain',
+        quality: 'Unknown',
+        url: originalUrl
+    }]);
+});
+
+test('Pixeldrain extractor keeps original URL for a file with download restrictions', async () => {
+    const originalUrl = 'https://pixeldrain.dev/file/mock-restricted-id';
+    const streams = await extractPixeldrainStream(
+        originalUrl,
+        async () => response(200, {
+            success: true,
+            name: 'movie.mkv',
+            availability: 'file_rate_limited_captcha_required'
+        }),
+        () => {}
+    );
+    assert.deepStrictEqual(streams, [{
+        source: 'Pixeldrain',
+        quality: 'Unknown',
+        url: originalUrl
+    }]);
+});
+
+test('Pixeldrain extractor rejects unsupported hosts without making requests', async () => {
+    for (const originalUrl of [
+        'https://pixeldrain.attacker.example/file/mock-id',
+        'https://unrelated.example/file/mock-id'
+    ]) {
+        let requestCount = 0;
+        const streams = await extractPixeldrainStream(originalUrl, async () => {
+            requestCount++;
+            return response(200, { success: true, name: 'movie.mkv' });
+        });
+        assert.strictEqual(requestCount, 0);
+        assert.deepStrictEqual(streams, [{
+            source: 'Pixeldrain',
+            quality: 'Unknown',
+            url: originalUrl
+        }]);
+    }
+});
+
+test('Pixeldrain extractor rejects invalid protocols and malformed URLs without requests', async () => {
+    for (const originalUrl of [
+        'http://pixeldrain.com/file/mock-id',
+        'ftp://pixeldrain.com/file/mock-id',
+        'https://[malformed'
+    ]) {
+        let requestCount = 0;
+        const streams = await extractPixeldrainStream(originalUrl, async () => {
+            requestCount++;
+            return response(200, { success: true, name: 'movie.mkv' });
+        });
+        assert.strictEqual(requestCount, 0);
+        assert.deepStrictEqual(streams, [{
+            source: 'Pixeldrain',
+            quality: 'Unknown',
+            url: originalUrl
+        }]);
+    }
+});
+
+test('Pixeldrain extractor rejects malformed and incomplete paths without requests', async () => {
+    for (const originalUrl of [
+        'https://pixeldrain.com/file/mock-id%2Fextra',
+        'https://pixeldrain.com/file/',
+        'https://pixeldrain.com/file/mock-id/extra'
+    ]) {
+        let requestCount = 0;
+        const streams = await extractPixeldrainStream(originalUrl, async () => {
+            requestCount++;
+            return response(200, { success: true, name: 'movie.mkv' });
+        });
+        assert.strictEqual(requestCount, 0);
+        assert.deepStrictEqual(streams, [{
+            source: 'Pixeldrain',
+            quality: 'Unknown',
+            url: originalUrl
+        }]);
+    }
+});
+
+test('Pixeldrain extractor preserves original link as fallback after inconclusive errors', async () => {
+    const originalUrl = 'https://pixeldrain.net/file/mock-timeout-id';
+    const streams = await extractPixeldrainStream(
+        originalUrl,
+        async () => {
+            const error = new Error('mock timeout');
+            error.code = 'ETIMEDOUT';
+            throw error;
+        },
+        () => {}
+    );
+    assert.deepStrictEqual(streams, [{
+        source: 'Pixeldrain',
+        quality: 'Unknown',
+        url: originalUrl
+    }]);
 });
 
 test('Pixeldrain missing-file codes are recognized in nested error bodies', () => {
