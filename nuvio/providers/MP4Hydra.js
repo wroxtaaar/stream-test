@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { getWithRetry } = require('../utils/requestRetry');
 const FormData = require('form-data');
 
 // Helper function to generate slug from title
@@ -475,7 +476,7 @@ async function getTMDBDetails(tmdbId, mediaType) {
     
     try {
         console.log(`[MP4Hydra] Fetching ${mediaType} details for TMDB ID: ${tmdbId}`);
-        const response = await axios.get(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`);
+        const response = await getWithRetry(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=${TMDB_API_KEY}`, { timeout: 12000 });
         
         if (mediaType === 'movie') {
             return {
