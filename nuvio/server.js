@@ -703,7 +703,10 @@ app.get('/api/region-status', (req, res) => {
     res.json(status);
 });
 
-const PORT = process.env.PORT || 7777;
+const PORT = Number(process.env.PORT || 7000);
+
+// Lightweight container health endpoint.
+app.get('/health', (_req, res) => res.status(200).json({ status: 'ok', service: 'nuvio-streams-addon', port: PORT }));
 
 app.listen(PORT, () => {
     console.log(`Nuvio Streams Addon landing page available at http://localhost:${PORT}`);
