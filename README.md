@@ -1,36 +1,34 @@
-# Stream Test
+# VidCore Stream Resolver Lab
 
-A standalone Node.js VidSrc embed test harness with title search.
+An isolated sandbox for evaluating the VidCore HLS resolver separately from the existing VidSrc test harness. This does not replace the root app and does not change the root `docker-compose.yml`.
 
-## Features
+## Current state
 
-- Search movies and TV series by name using the Cinemeta metadata catalog (no API key required)
-- Select a result and load the VidSrc embed player
-- Check VidSrc title/episode availability and inspect the raw JSON response
-- Supports numeric TMDB IDs and IMDb IDs (`tt...`)
-- Health endpoint at `/health`
+The source and deployment wiring are contained under `vidcore-resolver/`. The service has a dedicated container name and binds to host port **3002** while listening on container port **3000**.
 
 ## Run on the VPS
 
+From the repository root, after pulling the `feature/vidcore-resolver` branch:
+
 ```bash
-git pull
-docker compose up -d --build
-docker compose logs --tail=50 stream-test
+docker compose -f vidcore-resolver/compose.yml up -d --build
+docker compose -f vidcore-resolver/compose.yml ps
+docker compose -f vidcore-resolver/compose.yml logs --tail=80 vidcore-resolver
+curl -fsS http://127.0.0.1:3002/health
 ```
 
-The app listens on port `3000`:
+Open `http://YOUR_VPS_IP:3002` to access the resolver UI.
 
-- UI: `http://YOUR_VPS_IP:3000`
-- Health: `http://YOUR_VPS_IP:3000/health`
+## Configuration
 
-**Port note:** if another app already uses port 3000 on this VPS, Docker cannot bind this port until that app is stopped or the host port is changed. Keep the container-side port at `3000`.
+- `PORT=3000` inside the container; host port defaults to `3002`.
+- `VIDCORE_ORIGIN` defaults to `https://vidcore.io`.
+- `HOST=0.0.0.0` makes the service reachable through Docker's published port.
 
-## Search notes
+Override the host port with `VIDCORE_HOST_PORT=3002` if needed.
 
-Title search uses Cinemeta's public metadata catalog and does not require a TMDB API key. Search results depend on that catalog's availability. VidSrc embeds are provider-hosted; HTTP success or metadata availability does not guarantee playback. This app does not extract direct HLS URLs.
+## Safety and limitations
 
-## Security
+This experimental resolver depends on a third-party upstream whose routes, session flow, player code and availability may change without notice. A successful resolve does not guarantee that playback will work. Use only content you are authorized to access, and do not expose this test UI publicly without suitable access controls and HTTPS.
 
-- Do not expose this test app publicly without access control and HTTPS.
-- Only test content you are authorized to access.
-- Do not commit API credentials or secrets.
+The resolver returns provider-origin media links and may proxy media segments. Treat those URLs as sensitive, ephemeral values; do not log or persist resolved stream tokens longer than necessary.
