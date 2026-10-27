@@ -20,9 +20,49 @@ function response(status, data = {}, headers = {}) {
 
 test('Pixeldrain successful file info is available', () => {
     assert.strictEqual(
-        classifyPixeldrain(200, { success: true, value: { name: 'movie.mkv' } }).status,
+        classifyPixeldrain(200, {
+            success: true,
+            id: '1234abcd',
+            name: 'movie.mkv',
+            size: 1024,
+            mime_type: 'video/x-matroska',
+            availability: ''
+        }).status,
         'available'
     );
+});
+
+test('Pixeldrain root-level success response is available', () => {
+    assert.strictEqual(
+        classifyPixeldrain(200, { success: true, name: 'movie.mkv', availability: '' }).status,
+        'available'
+    );
+});
+
+test('Pixeldrain nested file info shape remains supported as a compatibility variant', () => {
+    assert.strictEqual(
+        classifyPixeldrain(200, { success: true, value: { name: 'movie.mkv', availability: '' } }).status,
+        'available'
+    );
+});
+
+test('Pixeldrain download restrictions remain unverified instead of being called missing', () => {
+    const result = classifyPixeldrain(200, {
+        success: true,
+        name: 'movie.mkv',
+        availability: 'file_rate_limited_captcha_required'
+    });
+    assert.strictEqual(result.status, 'unknown');
+    assert.strictEqual(result.reason, 'pixeldrain_download_restricted');
+});
+
+test('Pixeldrain legal takedown restriction is explicitly unavailable', () => {
+    const result = classifyPixeldrain(200, {
+        success: true,
+        name: 'movie.mkv',
+        availability: 'unavailable_for_legal_reasons'
+    });
+    assert.strictEqual(result.status, 'access_denied');
 });
 
 test('Pixeldrain HTTP 404 is conclusively missing', () => {
@@ -37,6 +77,17 @@ test('Pixeldrain not_found response body is conclusively missing', () => {
     assert.strictEqual(classifyPixeldrain(200, { success: false, value: 'not_found' }).status, 'not_found');
 });
 
+test('Pixeldrain file_not_found response body is conclusively missing', () => {
+    assert.strictEqual(classifyPixeldrain(200, { success: false, value: 'file_not_found' }).status, 'not_found');
+});
+
+test('Pixeldrain missing-file codes are recognized in nested error bodies', () => {
+    assert.strictEqual(
+        classifyPixeldrain(403, { success: false, error: { value: 'file_not_found' } }).status,
+        'not_found'
+    );
+});
+
 test('Google Drive quota reason is distinguished from generic 403', () => {
     const quota = classifyGoogleDrive(403, {
         error: { status: 'PERMISSION_DENIED', errors: [{ reason: 'downloadQuotaExceeded' }] }
@@ -46,6 +97,14 @@ test('Google Drive quota reason is distinguished from generic 403', () => {
 
 test('Google Drive generic 403 remains unknown', () => {
     assert.strictEqual(classifyGoogleDrive(403, { error: { message: 'Forbidden' } }).status, 'unknown');
+});
+
+test('Google Drive API rate-limit reason remains unknown', () => {
+    const result = classifyGoogleDrive(403, {
+        error: { errors: [{ reason: 'rateLimitExceeded' }] }
+    });
+    assert.strictEqual(result.status, 'unknown');
+    assert.strictEqual(result.reason, 'host_rate_limited');
 });
 
 test('Google Drive temporary restriction remains unknown', () => {
@@ -66,6 +125,12 @@ test('Google Drive explicit missing-file response is classified as not found', (
         classifyGoogleDrive(404, { error: { status: 'NOT_FOUND' } }).status,
         'not_found'
     );
+});
+
+test('Google Drive bare HTTP 404 page is classified as inaccessible or missing', () => {
+    const result = classifyGoogleDrive(404, '<title>Error 404 (Not Found)!!1</title>');
+    assert.strictEqual(result.status, 'not_found');
+    assert.strictEqual(result.reason, 'google_drive_not_found_or_inaccessible');
 });
 
 test('Google Drive quota text in an HTML response is classified correctly', () => {
@@ -111,7 +176,33 @@ test('temporary host error remains unknown and is not persistently cached', asyn
     }
 });
 
-test('concurrent checks for the same stable file ID share one request', async () => {
+test('rate limits and all tested 5xx statuses remain unverified and retry', async () => {
+    const statuses = [429, 500, 502, 503, 504];
+    for (const status of statuses) {
+        const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'link-availability-'));
+        try {
+            let requestCount = 0;
+            const service = new LinkAvailabilityService({
+                cacheDir,
+                request: async () => {
+                    requestCount++;
+                    return requestCount === 1
+                        ? response(status, {})
+                        : response(200, { success: true, value: { name: 'movie.mkv' } });
+                },
+                logger: { warn() {}, info() {} }
+            });
+            const url = `https://pixeldrain.com/file/retry-${status}`;
+            assert.strictEqual((await service.validate(url)).status, 'unknown');
+            assert.strictEqual((await service.validate(url)).status, 'available');
+            assert.strictEqual(requestCount, 2);
+        } finally {
+            fs.rmSync(cacheDir, { recursive: true, force: true });
+        }
+    }
+});
+
+test('concurrent checks for the same host and stable file ID share one request', async () => {
     let requestCount = 0;
     const service = new LinkAvailabilityService({
         cacheDir: null,
@@ -124,7 +215,7 @@ test('concurrent checks for the same stable file ID share one request', async ()
     });
     const results = await Promise.all([
         service.validate('https://pixeldrain.com/file/shared-id'),
-        service.validate('https://pixeldrain.dev/api/file/shared-id?download')
+        service.validate('https://pixeldrain.com/api/file/shared-id?download')
     ]);
     assert.strictEqual(requestCount, 1);
     assert.deepStrictEqual(results.map(result => result.status), ['available', 'available']);
@@ -232,11 +323,28 @@ test('mirrors resolving to the same host and file ID are deduplicated', async ()
     });
     const candidates = await service.validateCandidates([
         { url: 'https://pixeldrain.com/file/duplicate-id', label: 'first' },
-        { url: 'https://pixeldrain.dev/api/file/duplicate-id?download', label: 'second' }
+        { url: 'https://pixeldrain.com/api/file/duplicate-id?download', label: 'second' }
     ]);
     assert.strictEqual(candidates.length, 1);
     assert.strictEqual(candidates[0].label, 'first');
     assert.strictEqual(requestCount, 1);
+});
+
+test('Pixeldrain alternate domains are checked on their own host', async () => {
+    const requestUrls = [];
+    const service = new LinkAvailabilityService({
+        cacheDir: null,
+        request: async ({ url }) => {
+            requestUrls.push(url);
+            return url.includes('pixeldrain.dev')
+                ? response(200, { success: true, name: 'movie.mkv' })
+                : response(404, { success: false, value: 'not_found' });
+        },
+        logger: { warn() {}, info() {} }
+    });
+    const result = await service.validate('https://pixeldrain.dev/file/alias-id');
+    assert.strictEqual(result.status, 'available');
+    assert.deepStrictEqual(requestUrls, ['https://pixeldrain.dev/api/file/alias-id/info']);
 });
 
 test('availability requests are bounded and use byte-range probes for Drive', async () => {
@@ -290,8 +398,41 @@ test('concurrency limit is shared across simultaneous candidate batches', async 
 
 test('stable identifiers ignore URL presentation variants', () => {
     const first = identifyLink('https://pixeldrain.com/file/stable-id?download=1#video');
-    const second = identifyLink('https://pixeldrain.dev/api/file/stable-id');
+    const second = identifyLink('https://pixeldrain.com/api/file/stable-id');
     assert.strictEqual(first.key, second.key);
+    assert.notStrictEqual(first.key, identifyLink('https://pixeldrain.dev/api/file/stable-id').key);
+});
+
+test('Google Drive standard and usercontent URLs are parsed to safe probe URLs', () => {
+    const standard = identifyLink('https://drive.google.com/file/d/drive-id/view?usp=sharing&resourcekey=secret-resource-key');
+    const usercontent = identifyLink('https://drive.usercontent.google.com/download?id=drive-id&export=download');
+    assert.strictEqual(standard.kind, 'google_drive');
+    assert.strictEqual(standard.fileId, 'drive-id');
+    assert.strictEqual(
+        standard.url,
+        'https://drive.google.com/uc?export=download&id=drive-id&resourcekey=secret-resource-key'
+    );
+    assert.strictEqual(
+        usercontent.url,
+        'https://drive.usercontent.google.com/download?id=drive-id&export=download'
+    );
+    assert.notStrictEqual(standard.key, identifyLink('https://drive.google.com/uc?id=drive-id').key);
+});
+
+test('Google Drive probes enforce a bounded response size and byte range', async () => {
+    let requestOptions;
+    const service = new LinkAvailabilityService({
+        cacheDir: null,
+        request: async options => {
+            requestOptions = options;
+            return response(206, Buffer.from('x'), { 'content-type': 'video/mp4' });
+        },
+        logger: { warn() {}, info() {} }
+    });
+    await service.validate('https://drive.google.com/uc?id=bounded-id');
+    assert.strictEqual(requestOptions.headers.Range, 'bytes=0-0');
+    assert.strictEqual(requestOptions.maxContentLength, 64 * 1024);
+    assert.strictEqual(requestOptions.responseType, 'arraybuffer');
 });
 
 (async () => {

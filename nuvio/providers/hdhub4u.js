@@ -11,8 +11,8 @@ const { findBestMatch } = require('string-similarity');
 const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
-const { isPixeldrainNotFound } = require('../utils/linkResolver');
-const { defaultLinkAvailability } = require('../utils/linkAvailability');
+const { extractPixeldrainFileId } = require('../utils/linkResolver');
+const { defaultLinkAvailability, isPixeldrainNotFound } = require('../utils/linkAvailability');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.HDHUB4U_DEBUG === 'true';
@@ -348,13 +348,7 @@ async function loadExtractor(url, referer = MAIN_URL) {
  */
 async function pixelDrainExtractor(link) {
     try {
-        let fileId;
-        const match = link.match(/(?:file|u)\/([A-Za-z0-9]+)/);
-        if (match) {
-            fileId = match[1];
-        } else {
-            fileId = link.split('/').pop();
-        }
+        const fileId = extractPixeldrainFileId(link);
         if (!fileId) {
             return [{ source: 'Pixeldrain', quality: 'Unknown', url: link }];
         }
@@ -372,12 +366,12 @@ async function pixelDrainExtractor(link) {
                 logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
                 return [];
             }
-            const pixeldrainInfo = info?.value || info;
+            const pixeldrainInfo = info?.value && typeof info.value === 'object' ? info.value : info;
             if (pixeldrainInfo && pixeldrainInfo.name) {
                 fileInfo.name = pixeldrainInfo.name;
                 fileInfo.size = pixeldrainInfo.size || 0;
 
-                const qualityMatch = info.name.match(/(\d{3,4})p/);
+                const qualityMatch = pixeldrainInfo.name.match(/(\d{3,4})p/);
                 if (qualityMatch) {
                     fileInfo.quality = qualityMatch[0];
                 }

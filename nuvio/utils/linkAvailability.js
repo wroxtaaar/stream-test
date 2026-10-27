@@ -42,6 +42,38 @@ function getGoogleDriveFileId(url) {
     return pathMatch ? pathMatch[1] : url.searchParams.get('id');
 }
 
+function getGoogleDriveProbeUrl(url, fileId) {
+    if (url.hostname.toLowerCase() === 'drive.usercontent.google.com') {
+        return url.href;
+    }
+
+    const probeUrl = new URL('https://drive.google.com/uc');
+    probeUrl.searchParams.set('export', 'download');
+    probeUrl.searchParams.set('id', fileId);
+    for (const parameter of ['resourcekey', 'authuser', 'confirm']) {
+        const value = parameter === 'resourcekey'
+            ? url.searchParams.get('resourcekey') || url.searchParams.get('resourceKey')
+            : url.searchParams.get(parameter);
+        if (value) probeUrl.searchParams.set(parameter, value);
+    }
+    return probeUrl.href;
+}
+
+function isPixeldrainNotFound(status, data) {
+    if (status === 404) return true;
+    const body = parsedResponse(data);
+    const values = [
+        body?.value,
+        body?.error?.value,
+        body?.data?.value,
+        ...(Array.isArray(body?.errors) ? body.errors.map(error => error?.value) : [])
+    ];
+    return values.some(value =>
+        typeof value === 'string' &&
+        ['not_found', 'file_not_found'].includes(value.toLowerCase())
+    );
+}
+
 function identifyLink(rawUrl) {
     if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
         return { status: 'unknown', reason: 'malformed_url', host: 'unknown', key: null };
@@ -63,13 +95,13 @@ function identifyLink(rawUrl) {
     if (hostname === 'pixeldrain.com' || hostname === 'pixeldrain.dev' || hostname === 'pixeldrain.net') {
         const fileId = getPixeldrainFileId(url);
         if (!fileId) {
-            return { status: 'unknown', reason: 'malformed_url', host: 'pixeldrain.com', key: null };
+            return { status: 'unknown', reason: 'malformed_url', host: hostname, key: null };
         }
         return {
             kind: 'pixeldrain',
-            host: 'pixeldrain.com',
+            host: hostname,
             fileId,
-            key: `pixeldrain.com:${fileId}`
+            key: `${hostname}:${fileId}`
         };
     }
 
@@ -78,12 +110,16 @@ function identifyLink(rawUrl) {
         if (!fileId) {
             return { status: 'unknown', reason: 'malformed_url', host: hostname, key: null };
         }
+        const resourceKey = url.searchParams.get('resourcekey') || url.searchParams.get('resourceKey');
+        const resourceKeyHash = resourceKey
+            ? `:resourcekey:${crypto.createHash('sha256').update(resourceKey).digest('hex')}`
+            : '';
         return {
             kind: 'google_drive',
             host: 'drive.google.com',
             fileId,
-            key: `drive.google.com:${fileId}`,
-            url: url.href
+            key: `drive.google.com:${fileId}${resourceKeyHash}`,
+            url: getGoogleDriveProbeUrl(url, fileId)
         };
     }
 
@@ -117,7 +153,7 @@ function parsedResponse(data) {
 
 function classifyPixeldrain(status, data) {
     const body = parsedResponse(data);
-    if (status === 404 || body?.value === 'not_found') {
+    if (isPixeldrainNotFound(status, body)) {
         return { status: 'not_found', reason: 'pixeldrain_not_found' };
     }
     if (status === 429) return { status: 'unknown', reason: 'host_rate_limited' };
@@ -133,7 +169,14 @@ function classifyPixeldrain(status, data) {
         }
         return { status: 'unknown', reason: 'validation_unknown' };
     }
-    if (status >= 200 && status < 300 && body?.success === true && (body?.name || body?.value?.name)) {
+    const fileInfo = body?.value && typeof body.value === 'object' ? body.value : body;
+    if (status >= 200 && status < 300 && body?.success === true && (fileInfo?.name)) {
+        if (fileInfo.availability === 'unavailable_for_legal_reasons') {
+            return { status: 'access_denied', reason: 'pixeldrain_unavailable_for_legal_reasons' };
+        }
+        if (fileInfo.availability) {
+            return { status: 'unknown', reason: 'pixeldrain_download_restricted' };
+        }
         return { status: 'available', reason: 'pixeldrain_file_info_found' };
     }
     return { status: 'unknown', reason: 'validation_unknown' };
@@ -159,11 +202,16 @@ function classifyGoogleDrive(status, data, headers = {}) {
         /you need access|request access|you do not have permission|access denied/.test(text)) {
         return { status: 'access_denied', reason: 'access_denied' };
     }
+    if (status === 404) {
+        return { status: 'not_found', reason: 'google_drive_not_found_or_inaccessible' };
+    }
     if (/\bnot[_ ]?found\b/.test(reasonText) ||
         /the file you have requested does not exist|file not found/.test(text)) {
         return { status: 'not_found', reason: 'google_drive_not_found' };
     }
-    if (status === 429) return { status: 'unknown', reason: 'host_rate_limited' };
+    if (status === 429 || /userratelimitexceeded|ratelimitexceeded/.test(reasonText)) {
+        return { status: 'unknown', reason: 'host_rate_limited' };
+    }
     if (status >= 500) return { status: 'unknown', reason: 'host_server_error' };
     if (status === 401) return { status: 'access_denied', reason: 'access_denied' };
 
@@ -347,7 +395,7 @@ class LinkAvailabilityService {
     async validatePixeldrain(identity) {
         const response = await this.request({
             method: 'GET',
-            url: `https://pixeldrain.com/api/file/${encodeURIComponent(identity.fileId)}/info`,
+            url: `https://${identity.host}/api/file/${encodeURIComponent(identity.fileId)}/info`,
             timeout: this.config.timeoutMs,
             maxRedirects: this.config.maxRedirects,
             maxContentLength: 64 * 1024,
@@ -423,6 +471,7 @@ module.exports = {
     classifyGoogleDrive,
     classifyPixeldrain,
     identifyLink,
+    isPixeldrainNotFound,
     mapWithConcurrency,
     rankAndFilterCandidates,
     defaultLinkAvailability

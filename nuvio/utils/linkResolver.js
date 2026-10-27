@@ -1,6 +1,7 @@
 const cheerio = require('cheerio');
 const { URL, URLSearchParams } = require('url');
 const FormData = require('form-data');
+const { isPixeldrainNotFound } = require('./linkAvailability');
 
 function extractPixeldrainFileId(url) {
   try {
@@ -10,19 +11,6 @@ function extractPixeldrainFileId(url) {
   } catch {
     return null;
   }
-}
-
-function isPixeldrainNotFound(status, data) {
-  let responseData = data;
-  if (typeof responseData === 'string') {
-    try {
-      responseData = JSON.parse(responseData);
-    } catch {
-      responseData = null;
-    }
-  }
-
-  return status === 404 || responseData?.value === 'not_found';
 }
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
@@ -394,7 +382,6 @@ module.exports = {
   isPixeldrainNotFound,
   resolveSidToRedirect
 };
-
 
 
 
