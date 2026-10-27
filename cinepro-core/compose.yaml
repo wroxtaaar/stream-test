@@ -1,0 +1,19 @@
+name: cinepro-core-test
+
+services:
+  cinepro-core:
+    image: ghcr.io/cinepro-org/core:latest
+    platform: linux/arm64
+    container_name: cinepro-core-test
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18083:3000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      TMDB_API_KEY: ${TMDB_API_KEY:?Set TMDB_API_KEY in cinepro-core/.env}
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 128
