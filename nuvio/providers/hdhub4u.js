@@ -12,6 +12,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
 const { isPixeldrainNotFound } = require('../utils/linkResolver');
+const { defaultLinkAvailability } = require('../utils/linkAvailability');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.HDHUB4U_DEBUG === 'true';
@@ -30,7 +31,7 @@ const DOMAINS_URL = "https://raw.githubusercontent.com/phisher98/TVVVV/refs/head
 const CACHE_ENABLED = process.env.DISABLE_CACHE !== 'true';
 log(`[HDHub4u Cache] Internal cache is ${CACHE_ENABLED ? 'enabled' : 'disabled'}.`);
 const CACHE_DIR = process.env.VERCEL ? path.join('/tmp', '.hdhub4u_cache') : path.join(__dirname, '.cache', 'hdhub4u');
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL = 5 * 60 * 1000;
 
 // Initialize Redis cache
 const redisCache = new RedisCache('HDHub4u');
@@ -371,9 +372,10 @@ async function pixelDrainExtractor(link) {
                 logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
                 return [];
             }
-            if (info && info.name) {
-                fileInfo.name = info.name;
-                fileInfo.size = info.size || 0;
+            const pixeldrainInfo = info?.value || info;
+            if (pixeldrainInfo && pixeldrainInfo.name) {
+                fileInfo.name = pixeldrainInfo.name;
+                fileInfo.size = pixeldrainInfo.size || 0;
 
                 const qualityMatch = info.name.match(/(\d{3,4})p/);
                 if (qualityMatch) {
@@ -1040,7 +1042,7 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
             filteredLinks = finalLinks.filter(link => link.episode === episodeNum);
         }
 
-        // Convert to Stremio stream format and filter out unknown quality streams
+        // Keep links with missing metadata: an info lookup failure is not proof the file is absent.
         const streams = filteredLinks
             .map(link => {
                 const quality = parseQualityForSort(link.quality) || 0;
@@ -1052,9 +1054,9 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
                     link: link
                 };
             })
-            .filter(item => item.quality > 0) // Exclude streams with unknown/invalid quality
             .map(item => {
                 const { quality, sizeText, link } = item;
+                const qualityLabel = quality > 0 ? quality.toString() : 'UNK';
 
                 // Create abbreviated source names
                 const sourceAbbrev = link.source.includes('Pixeldrain') ? 'PD' :
@@ -1064,24 +1066,22 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
                                 link.source.includes('HubCloud') ? 'HC' :
                                     link.source.substring(0, 2).toUpperCase();
 
-                // Simple title without verbose source information
-                let title = `${quality}p`;
-                if (link.episode) title += ` - Episode ${link.episode}`;
+                const title = quality > 0 ? `${quality}p` : 'Unknown quality';
+                const episodeTitle = link.episode ? `${title} - Episode ${link.episode}` : title;
 
                 return {
-                    name: `HDHub4u-${quality}p | ${sourceAbbrev}`,
-                    title: title,
+                    name: `HDHub4u-${quality > 0 ? `${quality}p` : 'UNK'} | ${sourceAbbrev}`,
+                    title: episodeTitle,
                     url: link.url,
-                    quality: quality.toString(),
+                    quality: qualityLabel,
                     provider: 'HDHub4u',
                     source: link.source,
                     size: sizeText,
-                    episode: link.episode || null,
-                    originalTitle: title // Store original title for fallback
+                    episode: link.episode || null
                 };
             });
 
-        // Group streams by source and quality, then validate and select best link
+        // Group mirror candidates by source and quality.
         const streamGroups = new Map();
 
         // Group streams by quality + source type to allow both HubCloud and Pixeldrain
@@ -1110,147 +1110,23 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
             });
         }
 
-        // Helper function to extract filename from headers or URL
-        const extractFilename = (headers, url) => {
-            // First try Content-Disposition header
-            const contentDisposition = headers['content-disposition'];
-            if (contentDisposition) {
-                // Try multiple patterns for Content-Disposition
-                const patterns = [
-                    /filename[^;=\n]*=(['"]?)([^'"\n]*?)\1/i,
-                    /filename\*=UTF-8''([^;\n]*)/i,
-                    /filename=([^;\n]*)/i
-                ];
-
-                for (const pattern of patterns) {
-                    const match = contentDisposition.match(pattern);
-                    if (match && match[2]) {
-                        try {
-                            return decodeURIComponent(match[2].trim());
-                        } catch (e) {
-                            return match[2].trim();
-                        }
-                    } else if (match && match[1]) {
-                        try {
-                            return decodeURIComponent(match[1].trim());
-                        } catch (e) {
-                            return match[1].trim();
-                        }
-                    }
-                }
-            }
-
-            // Fallback to URL path extraction
-            try {
-                const urlPath = new URL(url).pathname;
-                const pathSegments = urlPath.split('/');
-                const lastSegment = pathSegments[pathSegments.length - 1];
-
-                // Check if it looks like a filename (has extension)
-                if (lastSegment && lastSegment.includes('.') && lastSegment.length > 3) {
-                    return decodeURIComponent(lastSegment);
-                }
-
-                // Try to find any segment that looks like a filename
-                for (let i = pathSegments.length - 1; i >= 0; i--) {
-                    const segment = pathSegments[i];
-                    if (segment && segment.includes('.') && segment.length > 3) {
-                        return decodeURIComponent(segment);
-                    }
-                }
-            } catch (error) {
-                // URL parsing failed, continue
-            }
-
-            return null;
-        };
-
-        // Helper function to clean and format filename for display
-        const formatFilenameTitle = (filename, originalTitle, size) => {
-            if (!filename) return originalTitle;
-
-            // Extract movie/show name and year from original title, removing quality prefix
-            const cleanTitle = originalTitle.replace(/^\d+p\s*-?\s*/, ''); // Remove quality prefix like "1080p - "
-            const titleMatch = cleanTitle.match(/^(.+?)\s+\((\d{4})\)/);
-            if (titleMatch) {
-                const [, movieName, year] = titleMatch;
-                // Return in the format: "MovieName (Year) - FullFilename"
-                return `${movieName} (${year}) - ${filename}`;
-            }
-
-            // Fallback: return filename with clean title (remove leading dash if present)
-            const cleanedTitle = cleanTitle.replace(/^\s*-\s*/, ''); // Remove leading dash and spaces
-            return cleanedTitle ? `${cleanedTitle} - ${filename}` : filename;
-        };
-
-        // Validate links in parallel for each group
-        const validationPromises = Array.from(streamGroups.entries()).map(async ([groupKey, groupStreams]) => {
+        // Validate mirrors with bounded concurrency; unknown checks remain in the result.
+        const validationResults = [];
+        for (const [groupKey, groupStreams] of streamGroups) {
             log(`[HDHub4u] Validating ${groupStreams.length} links for ${groupKey}...`);
-
-            // Create validation promises for all streams in this group
-            const streamValidations = groupStreams.map(async (stream, index) => {
-                try {
-                    const response = await axios.head(stream.url, {
-                        timeout: 5000,
-                        httpsAgent: agent,
-                        headers: {
-                            'User-Agent': HEADERS['User-Agent']
-                        }
-                    });
-
-                    if (response.status === 200) {
-                        // Extract actual filename from headers or URL
-                        const actualFilename = extractFilename(response.headers, stream.url);
-
-                        log(`[HDHub4u] ✓ Link ${index + 1} validated for ${groupKey}${actualFilename ? ` - Filename: ${actualFilename}` : ''}`);
-
-                        return {
-                            ...stream,
-                            actualFilename,
-                            validationSuccess: true,
-                            priority: index // Lower index = higher priority
-                        };
-                    }
-                } catch (error) {
-                    log(`[HDHub4u] ✗ Link ${index + 1} failed for ${groupKey}: ${error.message}`);
-                }
-                return null;
+            const checked = await defaultLinkAvailability.validateCandidates(groupStreams, {
+                provider: 'HDHub4u'
             });
+            validationResults.push(...checked);
+        }
 
-            // Wait for all validations in this group to complete
-            const results = await Promise.all(streamValidations);
-            const validStreams = results.filter(result => result !== null);
+        const uniqueStreams = validationResults;
 
-            const validUrls = new Set(validStreams.map(stream => stream.url));
-            const orderedStreams = [
-                ...validStreams.sort((a, b) => a.priority - b.priority),
-                ...groupStreams.filter(stream => !validUrls.has(stream.url))
-            ];
-
-            for (const stream of orderedStreams) {
-                if (stream.actualFilename) {
-                    stream.title = formatFilenameTitle(
-                        stream.actualFilename,
-                        stream.originalTitle,
-                        stream.size
-                    );
-                }
-            }
-
-            if (validStreams.length === 0 && groupStreams.length > 0) {
-                log(`[HDHub4u] No links validated for ${groupKey}; returning all mirrors for fallback.`);
-            }
-
-            return orderedStreams;
-        });
-
-        // Wait for all group validations to complete
-        log(`[HDHub4u] Starting parallel validation of ${streamGroups.size} groups...`);
-        const validationResults = await Promise.all(validationPromises);
-        const uniqueStreams = validationResults.flat().filter(stream => stream !== null);
-
-        // Sort by quality (highest first)
+        // Prefer confirmed host availability, then retain the existing quality ordering.
         uniqueStreams.sort((a, b) => {
+            const availabilityA = a.linkAvailability?.status === 'available' ? 0 : 1;
+            const availabilityB = b.linkAvailability?.status === 'available' ? 0 : 1;
+            if (availabilityA !== availabilityB) return availabilityA - availabilityB;
             const qualityA = parseQualityForSort(a.quality);
             const qualityB = parseQualityForSort(b.quality);
             return qualityB - qualityA;

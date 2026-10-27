@@ -18,13 +18,13 @@ main{max-width:1100px;margin:auto;padding:32px 20px 64px}.top{display:flex;justi
 <section class="panel">
 <h2>1. Connect</h2>
 <div class="row">
-<div class="field"><label for="base">Addon base URL</label><input id="base" value="" placeholder="https://your-domain.example"></div>
+<div class="field"><label for="base">Addon base URL</label><input id="base" value="" placeholder="http://your-server:17000"></div>
 <div class="field"><label for="tmdbKey">TMDB API key (saved in this browser)</label><input id="tmdbKey" type="password" autocomplete="off" placeholder="Paste your TMDB API key"></div>
 <button id="forgetKey" type="button" class="secondary">Forget key</button>
 <button id="connect">Check</button>
 </div>
 <p class="hint" id="keyStorageStatus">Your key is stored in this browser only and sent to TMDB when searching. Use “Forget key” to remove it.</p>
-<p class="hint">For remote use, open this page from the same VPS origin or enter your HTTPS addon URL. Avoid using an HTTP URL over an HTTPS page.</p>
+<p class="hint">The default uses port 17000 on this host. Override it here or pass an explicit addon URL as <code>?addon=http://host:17000</code>. Avoid using an HTTP URL over an HTTPS page.</p>
 <div id="connectMsg" class="message hidden"></div>
 </section>
 <section class="panel">
@@ -40,7 +40,7 @@ main{max-width:1100px;margin:auto;padding:32px 20px 64px}.top{display:flex;justi
 </div>
 <div class="row" style="margin-top:14px"><button id="getStreams">Find streams</button><span class="hint" id="selectedHint">Select a title above first.</span></div>
 <div id="streamMsg" class="message hidden"></div><div id="streamResults"></div>
-<div id="streamHelp" class="message hidden">Host errors: Pixeldrain “not_found” means that file is unavailable; a Google Drive 403 quota error means the host’s shared download limit was reached. Try another listed mirror or provider. The addon cannot restore removed files or reset a host’s quota.</div>
+<div id="streamHelp" class="message hidden">Host checks are only availability hints, not playback tests. “Available” means the host returned a file-like response; playback can still fail. “Unverified” means the check was inconclusive (including timeouts and generic 403 responses), so the mirror is retained as a fallback. Confirmed missing files, Google Drive quota errors, and explicit access denials are temporarily suppressed. Try another listed mirror or provider.</div>
 </section>
 <footer>Personal testing UI · Stream links may expire or fail at playback time.</footer>
 </main>
@@ -79,7 +79,14 @@ $('forgetKey').onclick=()=>{
     console.error('Could not remove the saved TMDB key:',error);
   }
 };
-if(location.protocol==='http:'||location.protocol==='https:') $('base').value=location.origin;
+const configuredAddonUrl=new URLSearchParams(location.search).get('addon');
+if(configuredAddonUrl){
+  $('base').value=configuredAddonUrl;
+}else if(location.protocol==='http:'||location.protocol==='https:'){
+  const defaultAddonUrl=new URL(location.origin);
+  defaultAddonUrl.port='17000';
+  $('base').value=defaultAddonUrl.origin;
+}
 const base=()=> $('base').value.trim().replace(/\/$/,'');
 function message(id,text,type=''){const el=$(id);el.textContent=text;el.className='message'+(type?' '+type:'');el.classList.remove('hidden')}
 function clearMessage(id){$(id).classList.add('hidden')}
@@ -115,12 +122,20 @@ $('getStreams').onclick = async () => {
       return;
     }
     $('streamHelp').classList.remove('hidden');
-    message('streamMsg', 'Found ' + streams.length + ' stream entries. Playback is not guaranteed until tested.', 'ok');
+    const checkedAvailable=streams.filter(stream=>stream.linkAvailability?.status==='available').length;
+    const checkedUnknown=streams.filter(stream=>stream.linkAvailability?.status==='unknown').length;
+    message('streamMsg', 'Found ' + streams.length + ' stream entries. Host checks: ' + checkedAvailable + ' available, ' + checkedUnknown + ' unverified; other links were not checked. Playback is not tested.', 'ok');
     $('streamResults').innerHTML = streams.map((stream, index) =>
       '<article class="stream">' +
         '<div class="streambody">' +
           '<div class="streamname">' + safeText(stream.name || 'Stream ' + (index + 1)) + '</div>' +
           '<div class="streamtitle">' + safeText(stream.title || 'Untitled stream') + '</div>' +
+          (stream.linkAvailability ? '<div class="meta">Host check: ' +
+            safeText(stream.linkAvailability.status === 'available' ? 'File response found; playback not tested' :
+              stream.linkAvailability.status === 'unknown' ? 'Unverified; retained as a fallback' :
+                stream.linkAvailability.status) +
+            (stream.linkAvailability.reason ? ' · ' + safeText(stream.linkAvailability.reason) : '') +
+          '</div>' : '') +
           '<div class="meta">Type: ' + safeText(stream.type || 'unknown') +
             (stream.behaviorHints && stream.behaviorHints.bingeGroup ? ' · ' + safeText(stream.behaviorHints.bingeGroup) : '') +
           '</div>' +

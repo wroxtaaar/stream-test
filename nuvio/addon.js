@@ -185,6 +185,7 @@ if (USE_EXTERNAL_PROVIDERS) {
 // NEW: Stream caching config
 const STREAM_CACHE_DIR = process.env.VERCEL ? path.join('/tmp', '.streams_cache') : path.join(__dirname, '.streams_cache');
 const STREAM_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const LINK_CHECKED_STREAM_CACHE_TTL_MS = 5 * 60 * 1000;
 const ENABLE_STREAM_CACHE = process.env.DISABLE_STREAM_CACHE !== 'true'; // Enabled by default
 console.log(`[addon.js] Stream links caching ${ENABLE_STREAM_CACHE ? 'enabled' : 'disabled'}`);
 console.log(`[addon.js] Redis caching ${redis ? 'available' : 'not available'}`);
@@ -619,6 +620,17 @@ const getStreamCacheKey = (provider, type, id, seasonNum = null, episodeNum = nu
     return key;
 };
 
+const isStreamCacheExpired = (provider, cached) => {
+    const now = Date.now();
+    if (cached.expiry && now > cached.expiry) return true;
+
+    if (['moviesdrive', 'hdhub4u'].includes(String(provider).toLowerCase())) {
+        return !Number.isFinite(cached.timestamp) || now - cached.timestamp >= LINK_CHECKED_STREAM_CACHE_TTL_MS;
+    }
+
+    return false;
+};
+
 // Get cached streams for a provider - Hybrid approach (Redis first, then file)
 const getStreamFromCache = async (provider, type, id, seasonNum = null, episodeNum = null, region = null, cookie = null) => {
     if (!ENABLE_STREAM_CACHE) return null;
@@ -639,7 +651,7 @@ const getStreamFromCache = async (provider, type, id, seasonNum = null, episodeN
                 const cached = JSON.parse(data);
 
                 // Check if cache is expired (redundant with Redis TTL, but for safety)
-                if (cached.expiry && Date.now() > cached.expiry) {
+                if (isStreamCacheExpired(provider, cached)) {
                     console.log(`[Redis Cache] EXPIRED for ${provider}: ${cacheKey}`);
                     await redis.del(cacheKey);
                     return null;
@@ -670,7 +682,7 @@ const getStreamFromCache = async (provider, type, id, seasonNum = null, episodeN
         const cached = JSON.parse(data);
 
         // Check if cache is expired
-        if (cached.expiry && Date.now() > cached.expiry) {
+        if (isStreamCacheExpired(provider, cached)) {
             console.log(`[File Cache] EXPIRED for ${provider}: ${fileCacheKey}`);
             await fs.unlink(cachePath).catch(() => { }); // Delete expired cache
             return null;
@@ -1502,7 +1514,7 @@ builder.defineStreamHandler(async (args) => {
                 if (streams && streams.length > 0) {
                     console.log(`[MoviesDrive] Successfully fetched ${streams.length} streams.`);
                     // Save to cache
-                    await saveStreamToCache('moviesdrive', tmdbTypeFromId, tmdbId, streams, 'ok', seasonNum, episodeNum);
+                    await saveStreamToCache('moviesdrive', tmdbTypeFromId, tmdbId, streams, 'ok', seasonNum, episodeNum, null, null, LINK_CHECKED_STREAM_CACHE_TTL_MS);
                     return streams.map(stream => ({ ...stream, provider: 'MoviesDrive' }));
                 } else {
                     console.log(`[MoviesDrive] No streams returned.`);
@@ -1586,7 +1598,7 @@ builder.defineStreamHandler(async (args) => {
                 if (streams && streams.length > 0) {
                     console.log(`[HDHub4u] Successfully fetched ${streams.length} streams.`);
                     // Save to cache
-                    await saveStreamToCache('hdhub4u', tmdbTypeFromId, tmdbId, streams, 'ok', seasonNum, episodeNum);
+                    await saveStreamToCache('hdhub4u', tmdbTypeFromId, tmdbId, streams, 'ok', seasonNum, episodeNum, null, null, LINK_CHECKED_STREAM_CACHE_TTL_MS);
                     return streams.map(stream => ({ ...stream, provider: 'HDHub4u' }));
                 } else {
                     console.log(`[HDHub4u] No streams returned.`);
@@ -1779,6 +1791,11 @@ builder.defineStreamHandler(async (args) => {
         console.log('Sorting streams for each provider by quality, then size...');
         for (const provider in streamsByProvider) {
             streamsByProvider[provider].sort((a, b) => {
+                const availabilityA = a.linkAvailability?.status === 'available' ? 0 : 1;
+                const availabilityB = b.linkAvailability?.status === 'available' ? 0 : 1;
+                if (availabilityA !== availabilityB) {
+                    return availabilityA - availabilityB;
+                }
                 const qualityA = parseQuality(a.quality);
                 const qualityB = parseQuality(b.quality);
                 if (qualityB !== qualityA) {
@@ -1815,6 +1832,13 @@ builder.defineStreamHandler(async (args) => {
 
     // Format and send the response
     const stremioStreamObjects = combinedRawStreams.map((stream) => {
+        const availabilityMetadata = stream.linkAvailability ? {
+            linkAvailability: {
+                ...stream.linkAvailability,
+                playbackTested: false
+            }
+        } : {};
+
         // --- Special handling for MoviesMod which has pre-formatted titles ---
         if (stream.provider === 'MoviesMod') {
             return {
@@ -1825,7 +1849,8 @@ builder.defineStreamHandler(async (args) => {
                 availability: 2,
                 behaviorHints: {
                     notWebReady: true
-                }
+                },
+                ...availabilityMetadata
             };
         }
 
@@ -1839,7 +1864,8 @@ builder.defineStreamHandler(async (args) => {
                 availability: 2,
                 behaviorHints: {
                     notWebReady: true
-                }
+                },
+                ...availabilityMetadata
             };
         }
 
@@ -1853,7 +1879,8 @@ builder.defineStreamHandler(async (args) => {
                 availability: 2,
                 behaviorHints: {
                     notWebReady: true
-                }
+                },
+                ...availabilityMetadata
             };
         }
 
@@ -2132,7 +2159,8 @@ ${warningMessage}`;
             url: stream.url,
             type: 'url', // CRITICAL: This is the type of the stream itself, not the content
             availability: 2,
-            behaviorHints: behaviorHints
+            behaviorHints: behaviorHints,
+            ...availabilityMetadata
         };
     });
 

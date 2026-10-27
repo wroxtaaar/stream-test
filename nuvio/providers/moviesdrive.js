@@ -10,7 +10,7 @@ const cheerio = require('cheerio');
 const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
-const { extractPixeldrainFileId, isPixeldrainNotFound } = require('../utils/linkResolver');
+const { defaultLinkAvailability } = require('../utils/linkAvailability');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.MOVIESDRIVE_DEBUG === 'true';
@@ -1029,45 +1029,12 @@ async function getMoviesDriveStreams(tmdbId, mediaType, season = null, episode =
 
         log(`[MoviesDrive] Found ${links.length} streaming links`);
 
-        const checkedPixeldrainFiles = new Map();
-        const availableLinks = await Promise.all(links.map(async link => {
-            if (link.source !== 'Pixeldrain') return link;
-
-            const fileId = extractPixeldrainFileId(link.url);
-            if (!fileId) return link;
-
-            if (!checkedPixeldrainFiles.has(fileId)) {
-                checkedPixeldrainFiles.set(fileId, (async () => {
-                    try {
-                        const response = await axios.get(
-                            `https://pixeldrain.com/api/file/${fileId}/info`,
-                            { timeout: 5000, validateStatus: () => true }
-                        );
-                        return !isPixeldrainNotFound(response.status, response.data);
-                    } catch (error) {
-                        logWarn(`[MoviesDrive] Could not verify Pixeldrain file ${fileId}: ${error.message}`);
-                        return true;
-                    }
-                })());
-            }
-
-            const isAvailable = await checkedPixeldrainFiles.get(fileId);
-            if (!isAvailable) {
-                logWarn(`[MoviesDrive] Skipping unavailable Pixeldrain file ${fileId}.`);
-                return null;
-            }
-            return link;
-        }));
-        const filteredLinks = availableLinks.filter(Boolean);
-        if (filteredLinks.length === 0) {
-            log(`[MoviesDrive] All extracted links were unavailable for query: "${searchQuery}"`);
-            return [];
-        }
-
         // Convert to Stremio format
-        const stremioStreams = convertToStremioFormat(filteredLinks, mediaType);
+        const stremioStreams = convertToStremioFormat(links, mediaType);
 
-        return stremioStreams;
+        return await defaultLinkAvailability.validateCandidates(stremioStreams, {
+            provider: 'MoviesDrive'
+        });
     } catch (error) {
         console.error(`[MoviesDrive] Error fetching streams:`, error.message);
         return [];

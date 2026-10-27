@@ -38,6 +38,14 @@ docker compose down
 
 `.env`, user cookies and API credentials must remain private. This is a streaming add-on, not a media host; a successful health check confirms only that the server is alive, not that providers return playable sources. Test only content you are authorized to access.
 
+## Stream link availability checks
+
+HDHub4u and MoviesDrive check Pixeldrain and Google Drive links using small metadata or byte-range requests; they do not download video content. An `available` result means the host returned a file-like response, not that a player can play it. Generic 403 responses, timeouts, temporary restrictions, and unsupported hosts remain `unknown` and are kept as fallback links. Only confirmed missing files, recognized Google Drive quota errors, or explicit access denials are temporarily suppressed. Availability results are surfaced as optional `linkAvailability` metadata, including `playbackTested: false`.
+
+The checker uses a five-second timeout and bounded concurrency by default. These settings and the per-status cache durations can be adjusted with `LINK_AVAILABILITY_TIMEOUT_MS`, `LINK_AVAILABILITY_CONCURRENCY` (1–16), `LINK_AVAILABILITY_AVAILABLE_TTL_MS`, `LINK_AVAILABILITY_NOT_FOUND_TTL_MS`, `LINK_AVAILABILITY_QUOTA_TTL_MS`, and `LINK_AVAILABILITY_ACCESS_DENIED_TTL_MS`. Unknown results are never cached. Provider stream results for the checked providers are cached for five minutes so stale cached lists do not mask rechecks.
+
+Run the mocked availability tests from this directory with `npm test`; the tests do not contact external hosts or download media.
+
 ## Source provenance
 
 The `nuvio/` application files originate from upstream Nuvio Streams, distributed under the license included in `nuvio/LICENSE`. The committed upstream `cookies.txt` was intentionally not copied.
