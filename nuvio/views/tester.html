@@ -19,10 +19,12 @@ main{max-width:1100px;margin:auto;padding:32px 20px 64px}.top{display:flex;justi
 <h2>1. Connect</h2>
 <div class="row">
 <div class="field"><label for="base">Addon base URL</label><input id="base" value="" placeholder="https://your-domain.example"></div>
-<div class="field"><label for="tmdbKey">TMDB API key (used in this browser session only)</label><input id="tmdbKey" type="password" autocomplete="off" placeholder="Paste your rotated TMDB API key"></div>
+<div class="field"><label for="tmdbKey">TMDB API key (saved in this browser)</label><input id="tmdbKey" type="password" autocomplete="off" placeholder="Paste your TMDB API key"></div>
+<button id="forgetKey" type="button" class="secondary">Forget key</button>
 <button id="connect">Check</button>
 </div>
-<p class="hint">The TMDB key is not saved or sent to this UI's server. For remote use, open this page from the same VPS origin or enter your HTTPS addon URL. Avoid using an HTTP URL over an HTTPS page.</p>
+<p class="hint" id="keyStorageStatus">Your key is stored in this browser only and sent to TMDB when searching. Use “Forget key” to remove it.</p>
+<p class="hint">For remote use, open this page from the same VPS origin or enter your HTTPS addon URL. Avoid using an HTTP URL over an HTTPS page.</p>
 <div id="connectMsg" class="message hidden"></div>
 </section>
 <section class="panel">
@@ -38,12 +40,45 @@ main{max-width:1100px;margin:auto;padding:32px 20px 64px}.top{display:flex;justi
 </div>
 <div class="row" style="margin-top:14px"><button id="getStreams">Find streams</button><span class="hint" id="selectedHint">Select a title above first.</span></div>
 <div id="streamMsg" class="message hidden"></div><div id="streamResults"></div>
+<div id="streamHelp" class="message hidden">Host errors: Pixeldrain “not_found” means that file is unavailable; a Google Drive 403 quota error means the host’s shared download limit was reached. Try another listed mirror or provider. The addon cannot restore removed files or reset a host’s quota.</div>
 </section>
 <footer>Personal testing UI · Stream links may expire or fail at playback time.</footer>
 </main>
 <script>
 const $=id=>document.getElementById(id);
 let selected=null, selectedExternal=null;
+const tmdbKeyStorageKey='nuvioTesterTmdbApiKey';
+const tmdbKeyInput=$('tmdbKey');
+const keyStorageStatus=$('keyStorageStatus');
+try{
+  if(localStorage.getItem(tmdbKeyStorageKey)){
+    tmdbKeyInput.value=localStorage.getItem(tmdbKeyStorageKey);
+    keyStorageStatus.textContent='TMDB key loaded from this browser. Use “Forget key” to remove it.';
+  }
+}catch(error){
+  keyStorageStatus.textContent='Browser storage is unavailable; the key will not be remembered.';
+  console.error('Could not load the saved TMDB key:',error);
+}
+tmdbKeyInput.addEventListener('input',()=>{
+  try{
+    if(tmdbKeyInput.value) localStorage.setItem(tmdbKeyStorageKey,tmdbKeyInput.value);
+    else localStorage.removeItem(tmdbKeyStorageKey);
+    keyStorageStatus.textContent=tmdbKeyInput.value?'TMDB key saved in this browser. Use “Forget key” to remove it.':'TMDB key removed from this browser.';
+  }catch(error){
+    keyStorageStatus.textContent='Could not save the key in this browser. Check browser storage settings.';
+    console.error('Could not save the TMDB key:',error);
+  }
+});
+$('forgetKey').onclick=()=>{
+  tmdbKeyInput.value='';
+  try{
+    localStorage.removeItem(tmdbKeyStorageKey);
+    keyStorageStatus.textContent='TMDB key removed from this browser.';
+  }catch(error){
+    keyStorageStatus.textContent='Could not remove the saved key. Check browser storage settings.';
+    console.error('Could not remove the saved TMDB key:',error);
+  }
+};
 if(location.protocol==='http:'||location.protocol==='https:') $('base').value=location.origin;
 const base=()=> $('base').value.trim().replace(/\/$/,'');
 function message(id,text,type=''){const el=$(id);el.textContent=text;el.className='message'+(type?' '+type:'');el.classList.remove('hidden')}
@@ -53,7 +88,7 @@ function year(item){return (item.release_date||item.first_air_date||'').slice(0,
 function image(item){return item.poster_path?'https://image.tmdb.org/t/p/w185'+item.poster_path:''}
 async function checkHealth(){try{const r=await fetch(base()+'/health');if(!r.ok)throw Error('HTTP '+r.status);const j=await r.json();$('health').textContent='● Addon online';$('health').style.color='var(--green)';message('connectMsg','Addon health check passed.','ok')}catch(e){$('health').textContent='● Addon not reachable';$('health').style.color='var(--red)';message('connectMsg','Cannot reach addon: '+e.message+'. Check the URL and network access.','error')}}
 $('connect').onclick=checkHealth;
-$('searchForm').onsubmit=async e=>{e.preventDefault();const key=$('tmdbKey').value.trim(),q=$('query').value.trim();if(!key){message('searchMsg','Enter your TMDB API key above. It stays in this page’s memory only.','error');return}const btn=$('searchBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Searching';$('searchResults').innerHTML='';clearMessage('searchMsg');try{const r=await fetch('https://api.themoviedb.org/3/search/multi?api_key='+encodeURIComponent(key)+'&include_adult=false&query='+encodeURIComponent(q));const j=await r.json();if(!r.ok)throw Error(j.status_message||'TMDB HTTP '+r.status);const items=(j.results||[]).filter(x=>['movie','tv'].includes(x.media_type));if(!items.length){message('searchMsg','No movies or series found. Try another title.');return}$('searchResults').innerHTML=items.slice(0,18).map((x,i)=>'<article class="movie"><img class="poster" src="'+safeText(image(x)||'')+'" alt="" onerror="this.style.visibility=\'hidden\'"><div class="moviebody"><div class="movietitle">'+safeText(x.title||x.name)+'</div><div class="meta">'+safeText(year(x))+' · '+(x.media_type==='tv'?'TV series':'Movie')+'</div><div class="meta">TMDB '+safeText(x.vote_average?Number(x.vote_average).toFixed(1):'—')+'</div><button type="button" data-index="'+i+'">Select title</button></div></article>').join('');window.searchItems=items.slice(0,18);$('searchResults').querySelectorAll('button').forEach(b=>b.onclick=()=>selectTitle(window.searchItems[Number(b.dataset.index)]));message('searchMsg','Found '+items.length+' results. Select the exact title and year.','ok')}catch(err){message('searchMsg','Search failed: '+err.message,'error')}finally{btn.disabled=false;btn.textContent='Search titles'}};
+$('searchForm').onsubmit=async e=>{e.preventDefault();const key=$('tmdbKey').value.trim(),q=$('query').value.trim();if(!key){message('searchMsg','Enter your TMDB API key above.','error');return}const btn=$('searchBtn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Searching';$('searchResults').innerHTML='';clearMessage('searchMsg');try{const r=await fetch('https://api.themoviedb.org/3/search/multi?api_key='+encodeURIComponent(key)+'&include_adult=false&query='+encodeURIComponent(q));const j=await r.json();if(!r.ok)throw Error(j.status_message||'TMDB HTTP '+r.status);const items=(j.results||[]).filter(x=>['movie','tv'].includes(x.media_type));if(!items.length){message('searchMsg','No movies or series found. Try another title.');return}$('searchResults').innerHTML=items.slice(0,18).map((x,i)=>'<article class="movie"><img class="poster" src="'+safeText(image(x)||'')+'" alt="" onerror="this.style.visibility=\'hidden\'"><div class="moviebody"><div class="movietitle">'+safeText(x.title||x.name)+'</div><div class="meta">'+safeText(year(x))+' · '+(x.media_type==='tv'?'TV series':'Movie')+'</div><div class="meta">TMDB '+safeText(x.vote_average?Number(x.vote_average).toFixed(1):'—')+'</div><button type="button" data-index="'+i+'">Select title</button></div></article>').join('');window.searchItems=items.slice(0,18);$('searchResults').querySelectorAll('button').forEach(b=>b.onclick=()=>selectTitle(window.searchItems[Number(b.dataset.index)]));message('searchMsg','Found '+items.length+' results. Select the exact title and year.','ok')}catch(err){message('searchMsg','Search failed: '+err.message,'error')}finally{btn.disabled=false;btn.textContent='Search titles'}};
 async function selectTitle(item){selected=item;selectedExternal=null;$('selectedPanel').classList.remove('hidden');$('selectedInfo').innerHTML='<div class="movietitle">'+safeText(item.title||item.name)+' ('+safeText(year(item))+')</div><div class="meta">'+(item.media_type==='tv'?'TV series':'Movie')+' · TMDB ID '+item.id+'</div>';$('episodeFields').classList.toggle('hidden',item.media_type!=='tv');$('streamResults').innerHTML='';$('selectedHint').textContent='Resolving IMDb ID…';$('getStreams').disabled=true;try{const key=$('tmdbKey').value.trim();const r=await fetch('https://api.themoviedb.org/3/'+(item.media_type==='tv'?'tv':'movie')+'/'+item.id+'/external_ids?api_key='+encodeURIComponent(key));const j=await r.json();if(!r.ok)throw Error(j.status_message||'TMDB HTTP '+r.status);selectedExternal=j.imdb_id;if(!selectedExternal)throw Error('No IMDb ID is available for this title.');$('selectedHint').textContent='IMDb ID: '+selectedExternal+' · Ready';$('getStreams').disabled=false;$('selectedPanel').scrollIntoView({behavior:'smooth',block:'start'})}catch(err){$('selectedHint').textContent=err.message;message('streamMsg','Could not resolve IMDb ID: '+err.message,'error')}}
 $('getStreams').onclick = async () => {
   if (!selected || !selectedExternal) return;
@@ -61,6 +96,7 @@ $('getStreams').onclick = async () => {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Fetching streams';
   $('streamResults').innerHTML = '';
+  $('streamHelp').classList.add('hidden');
   clearMessage('streamMsg');
   try {
     let path = '/stream/' + (selected.media_type === 'tv' ? 'series' : 'movie') + '/' + encodeURIComponent(selectedExternal);
@@ -74,9 +110,11 @@ $('getStreams').onclick = async () => {
     if (!response.ok) throw Error('Addon HTTP ' + response.status);
     const streams = Array.isArray(data.streams) ? data.streams : [];
     if (!streams.length) {
+      $('streamHelp').classList.add('hidden');
       message('streamMsg', 'No streams returned for this title/episode. Check provider logs on the VPS.', 'error');
       return;
     }
+    $('streamHelp').classList.remove('hidden');
     message('streamMsg', 'Found ' + streams.length + ' stream entries. Playback is not guaranteed until tested.', 'ok');
     $('streamResults').innerHTML = streams.map((stream, index) =>
       '<article class="stream">' +

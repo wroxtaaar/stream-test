@@ -2,6 +2,29 @@ const cheerio = require('cheerio');
 const { URL, URLSearchParams } = require('url');
 const FormData = require('form-data');
 
+function extractPixeldrainFileId(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\/(?:api\/)?(?:file|u)\/([A-Za-z0-9_-]+)/i);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function isPixeldrainNotFound(status, data) {
+  let responseData = data;
+  if (typeof responseData === 'string') {
+    try {
+      responseData = JSON.parse(responseData);
+    } catch {
+      responseData = null;
+    }
+  }
+
+  return status === 404 || responseData?.value === 'not_found';
+}
+
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.LINKRESOLVER_DEBUG === 'true';
 const defaultLog = DEBUG ? console : { log: () => {}, warn: () => {} };
@@ -367,9 +390,10 @@ module.exports = {
   defaultTryResumeCloud,
   followRedirectToFilePage,
   extractFinalDownloadFromFilePage,
+  extractPixeldrainFileId,
+  isPixeldrainNotFound,
   resolveSidToRedirect
 };
-
 
 
 

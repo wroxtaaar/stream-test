@@ -11,6 +11,7 @@ const { findBestMatch } = require('string-similarity');
 const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
+const { isPixeldrainNotFound } = require('../utils/linkResolver');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env.HDHUB4U_DEBUG === 'true';
@@ -52,6 +53,10 @@ const getFromCache = async (key) => {
     // Try Redis cache first, then fallback to file system
     const cachedData = await redisCache.getFromCache(key, '', CACHE_DIR);
     if (cachedData) {
+        if (!Number.isFinite(cachedData.cachedAt) || Date.now() - cachedData.cachedAt > CACHE_TTL) {
+            log(`[HDHub4u Cache] Expired or legacy entry for key: ${key}`);
+            return null;
+        }
         log(`[HDHub4u Cache] HIT for key: ${key}`);
         return cachedData.data || cachedData; // Support both new format (data field) and legacy format
     }
@@ -64,7 +69,8 @@ const saveToCache = async (key, data) => {
     if (!CACHE_ENABLED) return;
 
     const cacheData = {
-        data: data
+        data,
+        cachedAt: Date.now()
     };
 
     // Save to both Redis and file system
@@ -356,7 +362,15 @@ async function pixelDrainExtractor(link) {
         let fileInfo = { name: '', quality: 'Unknown', size: 0 };
 
         try {
-            const { data: info } = await makeRequest(infoUrl, { httpsAgent: agent });
+            const response = await makeRequest(infoUrl, {
+                httpsAgent: agent,
+                validateStatus: () => true
+            });
+            const info = response.data;
+            if (isPixeldrainNotFound(response.status, info)) {
+                logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
+                return [];
+            }
             if (info && info.name) {
                 fileInfo.name = info.name;
                 fileInfo.size = info.size || 0;
@@ -367,6 +381,10 @@ async function pixelDrainExtractor(link) {
                 }
             }
         } catch (e) {
+            if (isPixeldrainNotFound(e.response?.status, e.response?.data)) {
+                logWarn(`[HDHub4u] Pixeldrain file ${fileId} is no longer available.`);
+                return [];
+            }
             logWarn(`[HDHub4u] Could not fetch file info for ${fileId}:`, e.message);
         }
 
@@ -1040,8 +1058,11 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
 
                 // Create abbreviated source names
                 const sourceAbbrev = link.source.includes('Pixeldrain') ? 'PD' :
-                    link.source.includes('HubCloud') ? 'HC' :
-                        link.source.substring(0, 2).toUpperCase();
+                    link.source.includes('S3 Server') ? 'S3' :
+                        link.source.includes('FSL Server') ? 'FSL' :
+                            link.source.includes('BuzzServer') ? 'BS' :
+                                link.source.includes('HubCloud') ? 'HC' :
+                                    link.source.substring(0, 2).toUpperCase();
 
                 // Simple title without verbose source information
                 let title = `${quality}p`;
@@ -1200,48 +1221,33 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
             const results = await Promise.all(streamValidations);
             const validStreams = results.filter(result => result !== null);
 
-            if (validStreams.length > 0) {
-                // Return the highest priority valid stream
-                const selectedStream = validStreams.sort((a, b) => a.priority - b.priority)[0];
+            const validUrls = new Set(validStreams.map(stream => stream.url));
+            const orderedStreams = [
+                ...validStreams.sort((a, b) => a.priority - b.priority),
+                ...groupStreams.filter(stream => !validUrls.has(stream.url))
+            ];
 
-                // Update title with actual filename if available
-                if (selectedStream.actualFilename) {
-                    selectedStream.title = formatFilenameTitle(
-                        selectedStream.actualFilename,
-                        selectedStream.originalTitle,
-                        selectedStream.size
+            for (const stream of orderedStreams) {
+                if (stream.actualFilename) {
+                    stream.title = formatFilenameTitle(
+                        stream.actualFilename,
+                        stream.originalTitle,
+                        stream.size
                     );
                 }
-
-                return selectedStream;
-            } else if (groupStreams.length > 0) {
-                log(`[HDHub4u] No working links found for ${groupKey}, using first as fallback`);
-                const fallbackStream = groupStreams[0];
-
-                // Try to extract filename for fallback stream too
-                try {
-                    const actualFilename = extractFilename({}, fallbackStream.url); // No headers, just URL
-                    if (actualFilename) {
-                        fallbackStream.title = formatFilenameTitle(
-                            actualFilename,
-                            fallbackStream.originalTitle,
-                            fallbackStream.size
-                        );
-                    }
-                } catch (error) {
-                    // Filename extraction failed, keep original title
-                }
-
-                return fallbackStream;
             }
 
-            return null;
+            if (validStreams.length === 0 && groupStreams.length > 0) {
+                log(`[HDHub4u] No links validated for ${groupKey}; returning all mirrors for fallback.`);
+            }
+
+            return orderedStreams;
         });
 
         // Wait for all group validations to complete
         log(`[HDHub4u] Starting parallel validation of ${streamGroups.size} groups...`);
         const validationResults = await Promise.all(validationPromises);
-        const uniqueStreams = validationResults.filter(stream => stream !== null);
+        const uniqueStreams = validationResults.flat().filter(stream => stream !== null);
 
         // Sort by quality (highest first)
         uniqueStreams.sort((a, b) => {
