@@ -1,0 +1,18 @@
+name: comet-test
+
+services:
+  comet:
+    image: g0ldyy/comet:latest
+    platform: linux/arm64
+    container_name: comet-test
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18082:8000"
+    environment:
+      FASTAPI_PORT: "8000"
+      DATABASE_TYPE: sqlite
+      DATABASE_PATH: data/comet.db
+    volumes:
+      - ./data:/app/data
+    cpus: 1.0
+    mem_limit: 1g
