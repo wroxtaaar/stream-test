@@ -1,0 +1,15 @@
+name: torrserver-test
+
+services:
+  torrserver:
+    image: ghcr.io/yourok/torrserver:MatriX.147.1
+    platform: linux/arm64
+    container_name: torrserver-test
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18081:8090"
+    volumes:
+      - ./data:/opt/ts
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 128
