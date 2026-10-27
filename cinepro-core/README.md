@@ -43,8 +43,9 @@ nano .env
 docker compose up -d
 ```
 
-In VS Code Remote SSH, forward port `18083`. Check the health endpoint at
-`http://127.0.0.1:18083/health`; the backend home/capabilities are at `/`.
+In VS Code Remote SSH, forward port `18083`. The running image reports `GET /`
+as its health check and home/capabilities endpoint. Check it at
+`http://127.0.0.1:18083/`. (`/health` is not a route in the current image.)
 
 ## Manual checks
 
@@ -53,7 +54,7 @@ Run these commands from the `cinepro-core/` directory:
 ```bash
 docker compose ps
 docker compose logs --tail=50 cinepro-core
-curl -fsS http://127.0.0.1:18083/health
+curl -fsS http://127.0.0.1:18083/
 ```
 
 For an API smoke test, TMDB ID `961` is [The General (1926)](https://www.themoviedb.org/movie/961-the-general),
