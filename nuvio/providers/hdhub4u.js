@@ -675,7 +675,7 @@ async function search(query) {
 
             if (title && url) {
                 const absoluteUrl = toAbsoluteHttpUrl(url);
-                results.push({ title, url: absoluteUrl, poster });
+                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
             }
         });
     }
