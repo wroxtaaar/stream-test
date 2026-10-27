@@ -5,6 +5,7 @@ RUN npm ci --include=dev
 COPY upstream/tsconfig.json upstream/tsconfig.web.json ./
 COPY upstream/src ./src
 COPY upstream/web ./web
+RUN chown -R node:node /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0
