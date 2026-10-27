@@ -180,7 +180,41 @@ const convertImdbToTmdb = async (imdbId, regionPreference = null, expectedType =
     console.time(`convertImdbToTmdb_apiCall_${imdbId}`);
 
     try {
-        const response = await axios.get(findApiUrl, { timeout: 10000 });
+        // TMDB occasionally resets connections. Retry only transient failures so a
+        // short upstream/network hiccup does not immediately abort stream discovery.
+        const maxAttempts = 3;
+        const retryableNetworkCodes = new Set([
+            'ECONNRESET',
+            'ETIMEDOUT',
+            'ECONNABORTED',
+            'EAI_AGAIN',
+            'ENETUNREACH',
+            'EHOSTUNREACH'
+        ]);
+        let response;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                response = await axios.get(findApiUrl, { timeout: 10000 });
+                break;
+            } catch (requestError) {
+                const status = requestError.response?.status;
+                const isRetryable = retryableNetworkCodes.has(requestError.code) ||
+                    status === 429 ||
+                    (Number.isInteger(status) && status >= 500 && status <= 599);
+
+                if (!isRetryable || attempt === maxAttempts) {
+                    throw requestError;
+                }
+
+                const delayMs = 250 * (2 ** (attempt - 1));
+                console.warn(
+                    `    TMDB lookup attempt ${attempt}/${maxAttempts} failed (${requestError.code || `HTTP ${status}` || requestError.message}); retrying in ${delayMs}ms.`
+                );
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+
         console.timeEnd(`convertImdbToTmdb_apiCall_${imdbId}`);
         const findResults = response.data;
 
