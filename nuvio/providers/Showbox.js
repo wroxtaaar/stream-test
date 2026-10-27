@@ -189,7 +189,8 @@ const convertImdbToTmdb = async (imdbId, regionPreference = null, expectedType =
             'ECONNABORTED',
             'EAI_AGAIN',
             'ENETUNREACH',
-            'EHOSTUNREACH'
+            'EHOSTUNREACH',
+            'EPROTO'
         ]);
         let response;
 
