@@ -1,0 +1,18 @@
+# Isolated AIOStreams test instance. Does not modify RapidBay or CinePro.
+services:
+  aiostreams:
+    image: ghcr.io/viren070/aiostreams:latest
+    container_name: stream-test-aiostreams
+    restart: unless-stopped
+    ports:
+      - "${AIOSTREAMS_PORT:-3002}:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.status < 500 ? 0 : 1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
