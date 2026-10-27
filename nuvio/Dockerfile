@@ -1,6 +1,8 @@
 FROM node:20-bookworm-slim
 
 ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 WORKDIR /app
 
 # Puppeteer is a dependency upstream. Download its browser during build, and
@@ -21,8 +23,6 @@ RUN npm ci --omit=dev
 COPY . .
 
 ENV PORT=7000
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_DOWNLOAD=true
 EXPOSE 7000
 
 ENTRYPOINT ["dumb-init", "--"]
