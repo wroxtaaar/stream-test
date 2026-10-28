@@ -7,6 +7,7 @@ const path = require('path');
 const DEBUG = process.env.DEBUG === 'true' || process.env.REDIS_CACHE_DEBUG === 'true';
 const log = DEBUG ? console.log : () => {};
 const logWarn = DEBUG ? console.warn : () => {};
+const FILE_CACHE_ENTRY_MARKER = '__nuvioCacheEntry';
 
 // Redis Cache Utility for NuvioStreams Providers
 class RedisCache {
@@ -120,23 +121,50 @@ class RedisCache {
             const cachePath = path.join(cacheDir, subDir, `${cacheKey}.json`);
             try {
                 const fileData = await fs.readFile(cachePath, 'utf-8');
+                let cachedData;
+                let hasExpiration = false;
+                let remainingTtlSeconds;
+                try {
+                    cachedData = JSON.parse(fileData);
+                } catch (parseError) {
+                    cachedData = fileData;
+                }
+
+                if (cachedData && cachedData[FILE_CACHE_ENTRY_MARKER] === true) {
+                    const expiresAt = cachedData.expiresAt;
+                    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+                        log(`[${this.providerName} Cache] FILE SYSTEM CACHE EXPIRED for: ${path.join(subDir, cacheKey)}`);
+                        return null;
+                    }
+                    remainingTtlSeconds = Math.ceil((expiresAt - Date.now()) / 1000);
+                    hasExpiration = true;
+                    cachedData = cachedData.value;
+                    if (typeof cachedData === 'string') {
+                        try {
+                            cachedData = JSON.parse(cachedData);
+                        } catch (parseError) {
+                            // Preserve non-JSON string cache values.
+                        }
+                    }
+                }
+
                 log(`[${this.providerName} Cache] FILE SYSTEM CACHE HIT for: ${path.join(subDir, cacheKey)}`);
                 
-                // If Redis is available, populate Redis for next time (permanent cache)
+                // Preserve the file entry's remaining lifetime when warming Redis.
                 if (this.redisClient && this.redisClient.status === 'ready') {
                     try {
-                        await this.redisClient.set(fullCacheKey, fileData);
-                        log(`[${this.providerName} Cache] Populated REDIS CACHE from FILE SYSTEM for: ${fullCacheKey} (PERMANENT - no expiration)`);
+                        const redisData = typeof cachedData === 'string' ? cachedData : JSON.stringify(cachedData);
+                        if (hasExpiration) {
+                            await this.redisClient.setex(fullCacheKey, remainingTtlSeconds, redisData);
+                        } else {
+                            await this.redisClient.set(fullCacheKey, redisData);
+                        }
                     } catch (redisSetError) {
                         logWarn(`[${this.providerName} Cache] REDIS CACHE SET ERROR (after file read) for ${fullCacheKey}: ${redisSetError.message}`);
                     }
                 }
-                
-                try {
-                    return JSON.parse(fileData);
-                } catch (e) {
-                    return fileData;
-                }
+
+                return cachedData;
             } catch (error) {
                 if (error.code !== 'ENOENT') {
                     logWarn(`[${this.providerName} Cache] FILE SYSTEM CACHE READ ERROR for ${cacheKey}: ${error.message}`);
@@ -157,6 +185,14 @@ class RedisCache {
         }
 
         const dataToSave = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+        const hasExpiration = Number.isFinite(ttlSeconds) && ttlSeconds > 0;
+        const fileDataToSave = hasExpiration
+            ? JSON.stringify({
+                [FILE_CACHE_ENTRY_MARKER]: true,
+                expiresAt: Date.now() + ttlSeconds * 1000,
+                value: content
+            })
+            : dataToSave;
         const fullCacheKey = subDir ? `${this.providerName.toLowerCase()}:${subDir}:${cacheKey}` : `${this.providerName.toLowerCase()}:${cacheKey}`;
 
         // Attempt to save to Redis first with optional TTL
@@ -182,7 +218,7 @@ class RedisCache {
                 const fullSubDir = path.join(cacheDir, subDir);
                 await this.ensureCacheDir(fullSubDir);
                 const cachePath = path.join(fullSubDir, `${cacheKey}.json`);
-                await fs.writeFile(cachePath, dataToSave, 'utf-8');
+                await fs.writeFile(cachePath, fileDataToSave, 'utf-8');
                 log(`[${this.providerName} Cache] SAVED TO FILE SYSTEM CACHE: ${path.join(subDir, cacheKey)}`);
             } catch (error) {
                 logWarn(`[${this.providerName} Cache] FILE SYSTEM CACHE WRITE ERROR for ${cacheKey}: ${error.message}`);

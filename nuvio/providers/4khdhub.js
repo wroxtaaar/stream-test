@@ -139,12 +139,6 @@ async function fetchPageUrl(name, year, isSeries) {
 }
 
 async function resolveRedirectUrl(redirectUrl) {
-    const cacheKey = `redirect_v2_${redirectUrl.replace(/[^a-z0-9]/gi, '')}`;
-    if (CACHE_ENABLED) {
-        const cached = await redisCache.getFromCache(cacheKey, '', CACHE_DIR);
-        if (cached) return cached.data || cached;
-    }
-
     const redirectHtml = await fetchText(redirectUrl);
     if (!redirectHtml) return null;
 
@@ -160,11 +154,7 @@ async function resolveRedirectUrl(redirectUrl) {
         const redirectData = JSON.parse(step4);
 
         if (redirectData && redirectData.o) {
-            const resolved = atob(redirectData.o);
-            if (CACHE_ENABLED) {
-                await redisCache.saveToCache(cacheKey, { data: resolved }, '', CACHE_DIR, 86400 * 3); // 3 days
-            }
-            return resolved;
+            return atob(redirectData.o);
         }
     } catch (e) {
         console.error(`[4KHDHub] Error resolving redirect: ${e.message}`);
@@ -232,12 +222,7 @@ async function extractSourceResults($, el) {
 async function extractHubCloud(hubCloudUrl, baseMeta) {
     if (!hubCloudUrl) return [];
 
-    const cacheKey = `hubcloud_v2_${hubCloudUrl.replace(/[^a-z0-9]/gi, '')}`;
-    if (CACHE_ENABLED) {
-        const cached = await redisCache.getFromCache(cacheKey, '', CACHE_DIR);
-        if (cached) return cached.data || cached;
-    }
-
+    // Redirects and extracted media links may be signed and have short, undocumented lifetimes.
     const headers = { Referer: hubCloudUrl }; // or should it be the previous page? User's code uses meta.referer ?? url.href. HubCloud.ts says Referer: meta.referer ?? url.href.
     // In extractInternal(ctx, url, meta): const headers = { Referer: meta.referer ?? url.href };
     // Then fetches redirectHtml.
@@ -289,10 +274,6 @@ async function extractHubCloud(hubCloudUrl, baseMeta) {
             });
         }
     });
-
-    if (CACHE_ENABLED && results.length > 0) {
-        await redisCache.saveToCache(cacheKey, { data: results }, '', CACHE_DIR, 3600); // 1 hour TTL
-    }
 
     return results;
 }
@@ -371,4 +352,4 @@ async function get4KHDHubStreams(tmdbId, type, season = null, episode = null) {
     return streams;
 }
 
-module.exports = { get4KHDHubStreams };
+module.exports = { get4KHDHubStreams, resolveRedirectUrl, extractHubCloud };

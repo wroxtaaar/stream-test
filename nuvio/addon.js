@@ -634,9 +634,9 @@ const isStreamCacheExpired = (provider, cached) => {
 // Get cached streams for a provider - Hybrid approach (Redis first, then file)
 const getStreamFromCache = async (provider, type, id, seasonNum = null, episodeNum = null, region = null, cookie = null) => {
     if (!ENABLE_STREAM_CACHE) return null;
-    // Exclude ShowBox and PStream from cache entirely
+    // Exclude providers that return links with short or unknown lifetimes.
     try {
-        if (provider && ['showbox', 'pstream'].includes(String(provider).toLowerCase())) {
+        if (provider && ['showbox', 'pstream', '4khdhub'].includes(String(provider).toLowerCase())) {
             return null;
         }
     } catch (_) { }
@@ -707,9 +707,9 @@ const getStreamFromCache = async (provider, type, id, seasonNum = null, episodeN
 // Save streams to cache - Hybrid approach (Redis + file)
 const saveStreamToCache = async (provider, type, id, streams, status = 'ok', seasonNum = null, episodeNum = null, region = null, cookie = null, ttlMs = null) => {
     if (!ENABLE_STREAM_CACHE) return;
-    // Exclude ShowBox and PStream from cache entirely
+    // Exclude providers that return links with short or unknown lifetimes.
     try {
-        if (provider && ['showbox', 'pstream'].includes(String(provider).toLowerCase())) {
+        if (provider && ['showbox', 'pstream', '4khdhub'].includes(String(provider).toLowerCase())) {
             return;
         }
     } catch (_) { }
