@@ -83,7 +83,7 @@ ensureCacheDir();
 // --- Proxy Configuration ---
 const HDHUB4U_PROXY_URL = process.env.HDHUB4U_PROXY_URL;
 if (HDHUB4U_PROXY_URL) {
-    log(`[HDHub4u] Proxy support enabled: ${HDHUB4U_PROXY_URL}`);
+    log('[HDHub4u] Proxy support enabled');
 } else {
     log('[HDHub4u] No proxy configured, using direct connections');
 }
@@ -121,6 +121,25 @@ const RETRYABLE_NETWORK_CODES = new Set([
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+const sanitizeUrlForLog = (url) => {
+    try {
+        const parsed = toAbsoluteHttpUrl(url);
+        if (!parsed) return '[invalid URL]';
+        const safeUrl = new URL(parsed);
+        safeUrl.search = '';
+        safeUrl.hash = '';
+        return safeUrl.toString();
+    } catch {
+        return '[invalid URL]';
+    }
+};
+
+const describeHttpError = (error) => {
+    const status = error && error.response && error.response.status;
+    if (status) return `HTTP ${status}`;
+    return error && error.code ? String(error.code) : (error && error.message ? String(error.message) : 'unknown error');
+};
+
 const makeRequest = async (url, options = {}) => {
     const requestUrl = HDHUB4U_PROXY_URL
         ? `${HDHUB4U_PROXY_URL}${HDHUB4U_PROXY_URL.includes('?') ? '&' : '?'}url=${encodeURIComponent(url)}`
@@ -133,7 +152,7 @@ const makeRequest = async (url, options = {}) => {
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
-            if (HDHUB4U_PROXY_URL) log(`[HDHub4u] Using proxy for: ${url}`);
+            if (HDHUB4U_PROXY_URL) log(`[HDHub4u] Using proxy for: ${sanitizeUrlForLog(url)}`);
             return await axios.get(requestUrl, requestOptions);
         } catch (error) {
             const status = error.response && error.response.status;
@@ -279,7 +298,7 @@ function parseSearchResults(html, baseUrl = MAIN_URL) {
             const title = titleEl.text().trim() || element.find('h3, h2, .entry-title').first().text().trim();
             const url = titleEl.attr('href') || element.find('a').first().attr('href');
             const poster = element.find('img').first().attr('src') || element.find('img').first().attr('data-src');
-            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            const absoluteUrl = normalizeArticleUrl(toAbsoluteHttpUrl(url, baseUrl));
             if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
         });
     }
@@ -364,17 +383,13 @@ function cleanTitle(title) {
  * Resolves obfuscated redirector links.
  */
 async function getRedirectLinks(url) {
+    const safeUrl = sanitizeUrlForLog(url);
     try {
-        log(`[HDHub4u] Processing redirect link: ${url}`);
+        log(`[HDHub4u] Redirect stage: fetching redirector ${safeUrl}`);
         const response = await makeRequest(url, { headers: HEADERS, httpsAgent: agent });
         const doc = response.data;
 
-        // Log response details for debugging
-        log(`[HDHub4u] Response status: ${response.status}`);
-        log(`[HDHub4u] Response headers:`, JSON.stringify(response.headers, null, 2));
-        log(`[HDHub4u] Page content length: ${doc.length}`);
-        log(`[HDHub4u] Page content preview (first 500 chars):`, doc.substring(0, 500));
-        log(`[HDHub4u] Page content preview (last 500 chars):`, doc.substring(Math.max(0, doc.length - 500)));
+        log(`[HDHub4u] Redirect stage: response HTTP ${response.status} from ${safeUrl}`);
 
         const regex = /s\('o','([A-Za-z0-9+/=]+)'|ck\('_wp_http_\d+','([^']+)'/g;
         let combinedString = '';
@@ -385,7 +400,6 @@ async function getRedirectLinks(url) {
             if (extractedValue) {
                 combinedString += extractedValue;
                 matchCount++;
-                log(`[HDHub4u] Found match ${matchCount}: ${extractedValue.substring(0, 50)}...`);
             }
         }
 
@@ -393,40 +407,12 @@ async function getRedirectLinks(url) {
         log(`[HDHub4u] Combined string length: ${combinedString.length}`);
 
         if (!combinedString) {
-            console.error("[HDHub4u] Could not find encoded strings in page.");
-
-            // Check if this is an "Invalid Link" response from techyboy4u
-            if (doc.trim() === "Invalid Link !!") {
-                log('[HDHub4u] Techyboy4u returned "Invalid Link" - link may be expired or blocked');
-                return null; // Return null to indicate complete failure
+            if (typeof doc === 'string' && doc.trim() === "Invalid Link !!") {
+                log('[HDHub4u] Redirect stage: source returned Invalid Link; link may be expired or blocked');
+            } else {
+                logWarn(`[HDHub4u] Redirect stage: no supported encoded redirect data for ${safeUrl}`);
             }
-
-            log('[HDHub4u] Searching for alternative patterns...');
-
-            // Try alternative patterns
-            const altPatterns = [
-                /btoa\("([^"]+)"\)/g,
-                /atob\("([^"]+)"\)/g,
-                /btoa\('([^']+)'\)/g,
-                /atob\('([^']+)'\)/g,
-                /"([A-Za-z0-9+\/=]{20,})"/g,
-                /'([A-Za-z0-9+\/=]{20,})'/g
-            ];
-
-            for (let i = 0; i < altPatterns.length; i++) {
-                const altRegex = altPatterns[i];
-                const altMatches = [];
-                let altMatch;
-                while ((altMatch = altRegex.exec(doc)) !== null) {
-                    altMatches.push(altMatch[1]);
-                }
-                log(`[HDHub4u] Alternative pattern ${i + 1} (${altRegex}) found ${altMatches.length} matches`);
-                if (altMatches.length > 0) {
-                    log(`[HDHub4u] Sample matches:`, altMatches.slice(0, 3));
-                }
-            }
-
-            return null; // Return null instead of original URL for failed redirects
+            return null;
         }
 
         const decodedString = atob(rot13(atob(atob(combinedString))));
@@ -434,21 +420,35 @@ async function getRedirectLinks(url) {
 
         const encodedUrl = atob(jsonObject.o || '').trim();
         if (encodedUrl) {
-            return encodedUrl;
+            const validatedUrl = toAbsoluteHttpUrl(encodedUrl, safeUrl);
+            if (!validatedUrl) {
+                logWarn(`[HDHub4u] Redirect stage: decoded target failed URL validation for ${safeUrl}`);
+                return null;
+            }
+            return validatedUrl;
         }
 
         const data = btoa(jsonObject.data || '').trim();
         const wpHttp = (jsonObject.blog_url || '').trim();
         if (wpHttp && data) {
-            const directLinkResponse = await makeRequest(`${wpHttp}?re=${data}`, { headers: HEADERS, httpsAgent: agent });
+            const validatedWpHttp = toAbsoluteHttpUrl(wpHttp, safeUrl);
+            if (!validatedWpHttp) {
+                logWarn(`[HDHub4u] Redirect stage: decoded WordPress endpoint failed URL validation for ${safeUrl}`);
+                return null;
+            }
+            const followupUrl = new URL(validatedWpHttp);
+            followupUrl.searchParams.set('re', data);
+            const directLinkResponse = await makeRequest(followupUrl.toString(), { headers: HEADERS, httpsAgent: agent });
             const $ = cheerio.load(directLinkResponse.data);
-            return $('body').text().trim();
+            const bodyUrl = $('body').text().trim();
+            return toAbsoluteHttpUrl(bodyUrl, safeUrl);
         }
 
-        return url;
+        logWarn(`[HDHub4u] Redirect stage: unsupported redirect payload for ${safeUrl}`);
+        return null;
     } catch (e) {
-        console.error(`[HDHub4u] Error processing link ${url}:`, e.message);
-        return url;
+        logWarn(`[HDHub4u] Redirect stage: ${describeHttpError(e)} for ${safeUrl}`);
+        return null;
     }
 }
 
@@ -462,7 +462,7 @@ async function getRedirectLinks(url) {
 async function loadExtractor(url, referer = MAIN_URL) {
     const absoluteUrl = toAbsoluteHttpUrl(url, referer);
     if (!absoluteUrl) {
-        logWarn(`[HDHub4u] Skipping malformed extractor URL: ${String(url).slice(0, 180)}`);
+        logWarn(`[HDHub4u] Extractor stage: skipping malformed or non-HTTP URL`);
         return [];
     }
     url = absoluteUrl;
@@ -470,13 +470,13 @@ async function loadExtractor(url, referer = MAIN_URL) {
 
     // Some links from the main site are redirectors that need to be resolved first.
     if (url.includes("?id=") || hostname.includes('techyboy4u')) {
-        log(`[HDHub4u] Processing redirect URL: ${url} (hostname: ${hostname})`);
+        log(`[HDHub4u] Extractor stage: resolving redirector ${sanitizeUrlForLog(url)}`);
         const finalLink = await getRedirectLinks(url);
         if (!finalLink) {
-            log(`[HDHub4u] Failed to resolve redirect link: ${url}`);
+            logWarn(`[HDHub4u] Extractor stage: redirect resolution failed for ${sanitizeUrlForLog(url)}`);
             return [];
         }
-        log(`[HDHub4u] Redirect resolved to: ${finalLink}`);
+        log(`[HDHub4u] Extractor stage: redirect resolved to ${sanitizeUrlForLog(finalLink)}`);
         return loadExtractor(finalLink, url);
     }
 
@@ -489,7 +489,8 @@ async function loadExtractor(url, referer = MAIN_URL) {
     if (hostname.includes('hubcdn')) {
         return hubCdnExtractor(url, referer);
     }
-    if (hostname.includes('hblinks')) {
+    const supportedHblinksHostnames = new Set(['hblinks.lol']);
+    if (supportedHblinksHostnames.has(hostname)) {
         return hbLinksExtractor(url, referer);
     }
     if (hostname.includes('hubstream')) {
@@ -511,9 +512,9 @@ async function loadExtractor(url, referer = MAIN_URL) {
         return [];
     }
 
-    // Default case for unknown extractors
-    const sourceName = hostname.replace(/^www\./, '');
-    return [{ source: sourceName, quality: 'Unknown', url }];
+    // Do not fabricate playable streams from arbitrary intermediate hosts.
+    logWarn(`[HDHub4u] Extractor stage: unsupported host ${hostname}; no playable stream returned`);
+    return [];
 }
 
 /**
@@ -580,16 +581,23 @@ async function hubStreamExtractor(url, referer) {
 }
 
 async function hbLinksExtractor(url, referer) {
-    const response = await makeRequest(url, { headers: { ...HEADERS, Referer: referer }, httpsAgent: agent });
-    const $ = cheerio.load(response.data);
-    const links = $('h3 a, div.entry-content p a').map((i, el) => $(el).attr('href')).get();
+    const safeUrl = sanitizeUrlForLog(url);
+    try {
+        const response = await makeRequest(url, { headers: { ...HEADERS, Referer: referer }, httpsAgent: agent });
+        log(`[HDHub4u] hblinks stage: response HTTP ${response.status} from ${safeUrl}`);
+        const $ = cheerio.load(response.data);
+        const links = $('h3 a, div.entry-content p a').map((i, el) => $(el).attr('href')).get();
 
-    const finalLinks = [];
-    for (const link of links) {
-        const extracted = await loadExtractor(link, url);
-        finalLinks.push(...extracted);
+        const finalLinks = [];
+        for (const link of links) {
+            const extracted = await loadExtractor(link, url);
+            finalLinks.push(...extracted);
+        }
+        return finalLinks;
+    } catch (error) {
+        logWarn(`[HDHub4u] hblinks stage: ${describeHttpError(error)} for ${safeUrl}`);
+        return [];
     }
-    return finalLinks;
 }
 
 async function hubCdnExtractor(url, referer) {
@@ -932,7 +940,7 @@ async function getDownloadLinks(mediaUrl) {
                                 }
                             });
                         } catch (e) {
-                            console.error(`[HDHub4u] Error resolving direct link block: ${redirectLink}`, e.message);
+                            logWarn(`[HDHub4u] Extractor stage: direct-link block failed at ${sanitizeUrlForLog(redirectLink)}: ${describeHttpError(e)}`);
                         }
                     }
 
@@ -992,7 +1000,7 @@ async function getDownloadLinks(mediaUrl) {
                         const extractedLinks = await loadExtractor(epLink.url, resolvedUrl);
                         return extractedLinks.map(finalLink => ({ ...finalLink, episode: epLink.episode }));
                     } catch (e) {
-                        console.error(`[HDHub4u] Failed to extract episode link ${epLink.url}:`, e.message);
+                        logWarn(`[HDHub4u] Episode extraction stage: ${describeHttpError(e)} for ${sanitizeUrlForLog(epLink.url)}`);
                         return [];
                     }
                 });
@@ -1004,7 +1012,7 @@ async function getDownloadLinks(mediaUrl) {
                 return extractedLinks.map(finalLink => ({ ...finalLink, episode: linkInfo.episode }));
             }
         } catch (e) {
-            console.error(`[HDHub4u] Failed to extract from ${linkInfo.url}:`, e.message);
+            logWarn(`[HDHub4u] Host extraction stage: ${describeHttpError(e)} for ${sanitizeUrlForLog(linkInfo.url)}`);
             return [];
         }
     });
@@ -1243,5 +1251,9 @@ module.exports = {
     selectBestMatch,
     filterLinksForEpisode,
     toAbsoluteHttpUrl,
-    normalizeArticleUrl
+    normalizeArticleUrl,
+    makeRequest,
+    getRedirectLinks,
+    loadExtractor,
+    hbLinksExtractor
 };

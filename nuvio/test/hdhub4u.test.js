@@ -1,10 +1,15 @@
 const assert = require('assert');
+const axios = require('axios');
+const { spawnSync } = require('child_process');
 const {
     parseSearchResults,
     selectBestMatch,
     filterLinksForEpisode,
     toAbsoluteHttpUrl,
-    normalizeArticleUrl
+    normalizeArticleUrl,
+    getRedirectLinks,
+    loadExtractor,
+    hbLinksExtractor
 } = require('../providers/hdhub4u');
 
 const searchHtml = `
@@ -14,6 +19,17 @@ const searchHtml = `
     <figcaption><a href="https://provider.example/matrix-resurrections/"><p>The Matrix Resurrections (2021)</p></a></figcaption>
 `;
 const searchBase = 'https://provider.example/search/';
+
+const base64 = value => Buffer.from(value, 'utf8').toString('base64');
+const rot13 = value => value.replace(/[a-zA-Z]/g, c => {
+    const code = c.charCodeAt(0);
+    const base = code >= 97 ? 97 : 65;
+    return String.fromCharCode(base + ((code - base + 13) % 26));
+});
+const encodedRedirectPayload = blogUrl => {
+    const json = JSON.stringify({ blog_url: blogUrl, data: 'payload' });
+    return base64(base64(rot13(base64(json))));
+};
 
 const tests = [
     ['selects Matrix and never the similar-title distractor', () => {
@@ -74,6 +90,96 @@ const tests = [
 
         assert.strictEqual(selected.url, 'https://hdhub4u.frl/the-matrix-1999-bluray/?x=1');
     }],
+    ['normalizes stale HDHub4u URLs through the generic search-result fallback', () => {
+        const results = parseSearchResults(`
+            <article>
+                <h3><a href="https://new2.hdhub4u.free/the-matrix-1999-bluray/?x=1#links">The Matrix (1999)</a></h3>
+            </article>
+        `);
+        assert.strictEqual(results[0].url, 'https://hdhub4u.frl/the-matrix-1999-bluray/?x=1#links');
+    }],
+    ['rejects invalid and credential-bearing WordPress redirect endpoints without a follow-up request', async () => {
+        const originalGet = axios.get;
+        try {
+            for (const blogUrl of ['javascript:alert(1)', 'https://test-user:test-pass@example.com/wp']) {
+                let requestCount = 0;
+                axios.get = async () => {
+                    requestCount++;
+                    return {
+                        status: 200,
+                        data: `<script>s('o','${encodedRedirectPayload(blogUrl)}')</script>`,
+                        headers: {}
+                    };
+                };
+                assert.strictEqual(await getRedirectLinks('https://greenmotors.club/?id=mock'), null);
+                assert.strictEqual(requestCount, 1);
+            }
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
+    ['proxy-mode logs do not expose URL query tokens or fragments', () => {
+        const script = `
+            const assert = require('assert');
+            const axios = require('axios');
+            const originalGet = axios.get;
+            const originalLog = console.log;
+            const logs = [];
+
+            (async () => {
+                try {
+                    let requestCount = 0;
+                    axios.get = async (requestUrl) => {
+                        requestCount++;
+                        assert.strictEqual(requestCount, 1);
+                        assert.ok(requestUrl.includes('proxy.example'));
+                        return { status: 200, data: {}, headers: {} };
+                    };
+                    console.log = (...args) => logs.push(args.join(' '));
+
+                    const provider = require('./providers/hdhub4u');
+                    await provider.makeRequest(
+                        'https://files.example/video.mp4?token=super-secret#private',
+                        { retryAttempts: 1 }
+                    );
+
+                    assert.strictEqual(requestCount, 1);
+                    const capturedLogs = logs.join('\\n');
+                    assert.ok(!capturedLogs.includes('super-secret'), 'query token leaked into logs');
+                    assert.ok(!capturedLogs.includes('#private'), 'fragment leaked into logs');
+                    process.stdout.write('sanitized');
+                } catch (error) {
+                    originalLog(error.stack || error);
+                    process.exitCode = 1;
+                } finally {
+                    axios.get = originalGet;
+                    console.log = originalLog;
+                }
+            })();
+        `;
+        const result = spawnSync(process.execPath, ['-e', script], {
+            cwd: process.cwd(),
+            env: { ...process.env, DEBUG: 'true', HDHUB4U_PROXY_URL: 'https://proxy.example' },
+            encoding: 'utf8'
+        });
+        assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+        assert.strictEqual(result.stdout, 'sanitized');
+    }],
+    ['does not dispatch lookalike HBl links hostnames to the archive extractor', async () => {
+        const originalGet = axios.get;
+        try {
+            let requested = false;
+            axios.get = async () => {
+                requested = true;
+                throw new Error('unexpected network request');
+            };
+            assert.deepStrictEqual(await loadExtractor('https://hblinks.lol.evil.example/archives/66973', 'https://hdhub4u.frl/'), []);
+            assert.deepStrictEqual(await loadExtractor('https://evil-hblinks.lol/archives/66973', 'https://hdhub4u.frl/'), []);
+            assert.strictEqual(requested, false);
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
     ['matches the requested TV season without accepting a different season', () => {
         const seasonResults = [
             { title: 'Example Show Season 2', url: 'https://provider.example/s2/' },
@@ -106,6 +212,63 @@ const tests = [
             'http://files.example/video.mp4'
         );
     }],
+    ['returns null for a confirmed redirector HTTP 404 without returning the original URL', async () => {
+        const originalGet = axios.get;
+        try {
+            axios.get = async () => {
+                const error = new Error('Request failed with status code 404');
+                error.response = { status: 404 };
+                error.code = 'ERR_BAD_RESPONSE';
+                throw error;
+            };
+            const redirectUrl = 'https://greenmotors.club/?id=encoded-secret';
+            assert.strictEqual(await getRedirectLinks(redirectUrl), null);
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
+    ['returns no streams for a confirmed hblinks archive HTTP 404', async () => {
+        const originalGet = axios.get;
+        try {
+            axios.get = async () => {
+                const error = new Error('Request failed with status code 404');
+                error.response = { status: 404 };
+                error.code = 'ERR_BAD_RESPONSE';
+                throw error;
+            };
+            assert.deepStrictEqual(
+                await loadExtractor('https://hblinks.lol/archives/66973', 'https://greenmotors.club/?id=encoded-secret'),
+                []
+            );
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
+    ['does not treat arbitrary intermediate hosts as playable streams', async () => {
+        assert.deepStrictEqual(await loadExtractor('https://intermediate.example/page'), []);
+    }],
+    ['hbLinks extractor isolates archive failures and returns an empty result', async () => {
+        const originalGet = axios.get;
+        try {
+            axios.get = async () => {
+                const error = new Error('archive unavailable');
+                error.response = { status: 404 };
+                throw error;
+            };
+            assert.deepStrictEqual(await hbLinksExtractor('https://hblinks.lol/archives/66973', 'https://hdhub4u.frl/'), []);
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
+    ['does not return an original redirect URL when a page has no supported redirect payload', async () => {
+        const originalGet = axios.get;
+        try {
+            axios.get = async () => ({ status: 200, data: '<html>No redirect payload</html>', headers: {} });
+            assert.strictEqual(await getRedirectLinks('https://greenmotors.club/?id=missing'), null);
+        } finally {
+            axios.get = originalGet;
+        }
+    }],
     ['rejects non-HTTP schemes and URLs containing credentials', () => {
         const credentialUrl = new URL('https://files.example/video.mp4');
         credentialUrl.username = 'test-user';
@@ -118,15 +281,17 @@ const tests = [
 ];
 
 let passed = 0;
-for (const [name, callback] of tests) {
-    try {
-        callback();
-        passed++;
-        console.log(`PASS ${name}`);
-    } catch (error) {
-        console.error(`FAIL ${name}: ${error.stack || error}`);
-        process.exitCode = 1;
+(async () => {
+    for (const [name, callback] of tests) {
+        try {
+            await callback();
+            passed++;
+            console.log(`PASS ${name}`);
+        } catch (error) {
+            console.error(`FAIL ${name}: ${error.stack || error}`);
+            process.exitCode = 1;
+        }
     }
-}
 
-console.log(`\n${passed}/${tests.length} HDHub4u matching tests passed`);
+    console.log(`\n${passed}/${tests.length} HDHub4u matching tests passed`);
+})();
