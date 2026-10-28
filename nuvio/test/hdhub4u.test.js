@@ -244,6 +244,66 @@ const tests = [
             axios.get = originalGet;
         }
     }],
+    ['archives returning 200 diagnose nested link 404s at the nested-link stage', () => {
+        const script = `
+            const assert = require('assert');
+            const axios = require('axios');
+            const originalGet = axios.get;
+            const originalLog = console.log;
+            const originalWarn = console.warn;
+            const logs = [];
+
+            (async () => {
+                try {
+                    let requestCount = 0;
+                    axios.get = async (requestUrl) => {
+                        requestCount++;
+                        if (requestCount === 1) {
+                            assert.ok(requestUrl.includes('/archives/66973'));
+                            return {
+                                status: 200,
+                                data: '<h3><a href="https://hubdrive.example/download/file?token=nested-secret#fragment">Download</a></h3>',
+                                headers: {}
+                            };
+                        }
+                        assert.ok(requestUrl.includes('/download/file'));
+                        const error = new Error('Request failed with status code 404');
+                        error.response = { status: 404 };
+                        throw error;
+                    };
+                    console.log = (...args) => logs.push(args.join(' '));
+                    console.warn = (...args) => logs.push(args.join(' '));
+
+                    const provider = require('./providers/hdhub4u');
+                    assert.deepStrictEqual(
+                        await provider.hbLinksExtractor('https://hblinks.lol/archives/66973', 'https://hdhub4u.frl/'),
+                        []
+                    );
+                    assert.strictEqual(requestCount, 2);
+                    const capturedLogs = logs.join('\\n');
+                    assert.ok(capturedLogs.includes('hblinks archive-stage: response HTTP 200 hostname=hblinks.lol path=/archives/66973'));
+                    assert.ok(capturedLogs.includes('nested-link-stage: HTTP 404 hostname=hubdrive.example path=/download/file'));
+                    assert.ok(!capturedLogs.includes('nested-secret'));
+                    assert.ok(!capturedLogs.includes('#fragment'));
+                    process.stdout.write('diagnosed');
+                } catch (error) {
+                    originalLog(error.stack || error);
+                    process.exitCode = 1;
+                } finally {
+                    axios.get = originalGet;
+                    console.log = originalLog;
+                    console.warn = originalWarn;
+                }
+            })();
+        `;
+        const result = spawnSync(process.execPath, ['-e', script], {
+            cwd: process.cwd(),
+            env: { ...process.env, DEBUG: 'true' },
+            encoding: 'utf8'
+        });
+        assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+        assert.strictEqual(result.stdout, 'diagnosed');
+    }],
     ['does not treat arbitrary intermediate hosts as playable streams', async () => {
         assert.deepStrictEqual(await loadExtractor('https://intermediate.example/page'), []);
     }],

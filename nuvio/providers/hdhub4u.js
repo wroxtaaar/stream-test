@@ -137,7 +137,18 @@ const sanitizeUrlForLog = (url) => {
 const describeHttpError = (error) => {
     const status = error && error.response && error.response.status;
     if (status) return `HTTP ${status}`;
-    return error && error.code ? String(error.code) : (error && error.message ? String(error.message) : 'unknown error');
+    return error && error.code ? String(error.code) : 'network error';
+};
+
+const describeSafeUrlTarget = (url) => {
+    try {
+        const absoluteUrl = toAbsoluteHttpUrl(url);
+        if (!absoluteUrl) return { hostname: '[invalid]', pathname: '/' };
+        const parsed = new URL(absoluteUrl);
+        return { hostname: parsed.hostname, pathname: parsed.pathname || '/' };
+    } catch {
+        return { hostname: '[invalid]', pathname: '/' };
+    }
 };
 
 const makeRequest = async (url, options = {}) => {
@@ -158,9 +169,13 @@ const makeRequest = async (url, options = {}) => {
             const status = error.response && error.response.status;
             const retryable = RETRYABLE_NETWORK_CODES.has(error.code) ||
                 status === 429 || (status >= 500 && status <= 599);
-            if (!retryable || attempt === attempts) throw error;
+            const target = describeSafeUrlTarget(url);
+            if (!retryable || attempt === attempts) {
+                logWarn(`[HDHub4u] HTTP request stage: ${describeHttpError(error)} hostname=${target.hostname} path=${target.pathname}`);
+                throw error;
+            }
             const delay = 250 * (2 ** (attempt - 1));
-            logWarn(`[HDHub4u] Request failed (${error.code || status || error.message}); retrying ${attempt + 1}/${attempts} in ${delay}ms`);
+            logWarn(`[HDHub4u] HTTP request stage: ${describeHttpError(error)} hostname=${target.hostname} path=${target.pathname}; retrying ${attempt + 1}/${attempts} in ${delay}ms`);
             await sleep(delay);
         }
     }
@@ -581,23 +596,37 @@ async function hubStreamExtractor(url, referer) {
 }
 
 async function hbLinksExtractor(url, referer) {
-    const safeUrl = sanitizeUrlForLog(url);
-    try {
-        const response = await makeRequest(url, { headers: { ...HEADERS, Referer: referer }, httpsAgent: agent });
-        log(`[HDHub4u] hblinks stage: response HTTP ${response.status} from ${safeUrl}`);
-        const $ = cheerio.load(response.data);
-        const links = $('h3 a, div.entry-content p a').map((i, el) => $(el).attr('href')).get();
+    const archiveTarget = describeSafeUrlTarget(url);
 
-        const finalLinks = [];
-        for (const link of links) {
-            const extracted = await loadExtractor(link, url);
-            finalLinks.push(...extracted);
-        }
-        return finalLinks;
+    let response;
+    try {
+        response = await makeRequest(url, { headers: { ...HEADERS, Referer: referer }, httpsAgent: agent });
     } catch (error) {
-        logWarn(`[HDHub4u] hblinks stage: ${describeHttpError(error)} for ${safeUrl}`);
+        logWarn(`[HDHub4u] hblinks archive-stage: ${describeHttpError(error)} hostname=${archiveTarget.hostname} path=${archiveTarget.pathname}`);
         return [];
     }
+
+    log(`[HDHub4u] hblinks archive-stage: response HTTP ${response.status || 'unknown'} hostname=${archiveTarget.hostname} path=${archiveTarget.pathname}`);
+    const $ = cheerio.load(response.data);
+    const links = $('h3 a, div.entry-content p a').map((i, el) => $(el).attr('href')).get();
+
+    const finalLinks = [];
+    for (const link of links) {
+        const nestedUrl = toAbsoluteHttpUrl(link, url);
+        if (!nestedUrl) {
+            logWarn(`[HDHub4u] hblinks nested-link-stage: invalid or non-HTTP nested link hostname=${archiveTarget.hostname} path=${archiveTarget.pathname}`);
+            continue;
+        }
+
+        const nestedTarget = describeSafeUrlTarget(nestedUrl);
+        try {
+            const extracted = await loadExtractor(nestedUrl, url);
+            finalLinks.push(...extracted);
+        } catch (error) {
+            logWarn(`[HDHub4u] hblinks nested-link-stage: ${describeHttpError(error)} hostname=${nestedTarget.hostname} path=${nestedTarget.pathname}`);
+        }
+    }
+    return finalLinks;
 }
 
 async function hubCdnExtractor(url, referer) {
