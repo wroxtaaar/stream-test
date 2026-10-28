@@ -724,21 +724,82 @@ async function hubCloudExtractor(url, referer) {
 /**
  * Searches for media on HDHub4u.
  */
+const PINGORA_SEARCH_URL = 'https://search.pingora.fyi/collections/post/documents/search';
+
+async function searchPingora(query) {
+    const apiUrl = new URL(PINGORA_SEARCH_URL);
+    const today = new Date().toISOString().split('T')[0];
+    apiUrl.searchParams.set('q', query);
+    apiUrl.searchParams.set('query_by', 'post_title,category,stars,director,imdb_id');
+    apiUrl.searchParams.set('query_by_weights', '4,2,2,2,4');
+    apiUrl.searchParams.set('sort_by', 'sort_by_date:desc');
+    apiUrl.searchParams.set('limit', '15');
+    apiUrl.searchParams.set('highlight_fields', 'none');
+    apiUrl.searchParams.set('use_cache', 'true');
+    apiUrl.searchParams.set('page', '1');
+    apiUrl.searchParams.set('analytics_tag', today);
+
+    // Pingora is protected by Cloudflare; these headers mirror the site's browser request.
+    const response = await makeRequest(apiUrl.toString(), {
+        headers: {
+            ...HEADERS,
+            Accept: 'application/json, text/plain, */*',
+            Origin: new URL(MAIN_URL).origin,
+            Referer: `${MAIN_URL}/search.html?q=${encodeURIComponent(query)}`
+        },
+        httpsAgent: agent,
+        timeout: 12000
+    });
+
+    const hits = response.data && Array.isArray(response.data.hits) ? response.data.hits : [];
+    return hits.map(hit => {
+        const document = hit && hit.document;
+        if (!document) return null;
+        const url = toAbsoluteHttpUrl(document.permalink, MAIN_URL);
+        const title = String(document.post_title || '').trim();
+        return title && url ? { title, url, poster: document.post_thumbnail || null } : null;
+    }).filter(Boolean);
+}
+
+/**
+ * Searches HDHub4u's indexed posts first, then falls back to its WordPress search.
+ * Keep both result sets so exact title/year matching can choose a valid match from either.
+ */
 async function search(query) {
     await fetchAndUpdateDomain();
-    // Use /?s= (WordPress search) which returns static HTML
-    // The /search.html?q= uses a JavaScript-based Typesense API which is blocked by Cloudflare for server requests
-    const searchUrl = `${MAIN_URL}/?s=${encodeURIComponent(query)}`;
-    log(`[HDHub4u] Searching with URL: ${searchUrl}`);
-    const response = await makeRequest(searchUrl, { headers: HEADERS, httpsAgent: agent });
-    log(`[HDHub4u] Search response status: ${response.status}`);
-    const results = parseSearchResults(response.data);
+    const results = [];
+    const seenUrls = new Set();
 
-    log(`[HDHub4u] Parsed ${results.length} search results`);
-    if (results.length > 0) {
-        log(`[HDHub4u] First result: ${results[0].title} - ${results[0].url}`);
+    try {
+        const indexedResults = await searchPingora(query);
+        log(`[HDHub4u] Pingora returned ${indexedResults.length} results for "${query}"`);
+        for (const result of indexedResults) {
+            if (!seenUrls.has(result.url)) {
+                seenUrls.add(result.url);
+                results.push(result);
+            }
+        }
+    } catch (error) {
+        logWarn(`[HDHub4u] Pingora search failed (${error.response?.status || error.code || error.message}); trying WordPress search.`);
     }
 
+    try {
+        const searchUrl = `${MAIN_URL}/?s=${encodeURIComponent(query)}`;
+        log(`[HDHub4u] Searching WordPress with URL: ${searchUrl}`);
+        const response = await makeRequest(searchUrl, { headers: HEADERS, httpsAgent: agent });
+        log(`[HDHub4u] WordPress search response status: ${response.status}`);
+        const wordpressResults = parseSearchResults(response.data);
+        for (const result of wordpressResults) {
+            if (!seenUrls.has(result.url)) {
+                seenUrls.add(result.url);
+                results.push(result);
+            }
+        }
+    } catch (error) {
+        logWarn(`[HDHub4u] WordPress search failed (${error.response?.status || error.code || error.message})`);
+    }
+
+    log(`[HDHub4u] Combined ${results.length} unique results for "${query}"`);
     return results;
 }
 
