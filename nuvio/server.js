@@ -8,6 +8,11 @@ const cors = require('cors');
 const crypto = require('crypto'); // For generating a simple hash for personalized manifest ID
 const axios = require('axios'); // Added axios for HTTP requests
 const { AsyncLocalStorage } = require('async_hooks');
+const {
+    deduplicateStreams,
+    getConfiguredAddons,
+    normalizeStream
+} = require('./utils/stremioAddonAdapter');
 // body-parser is not strictly needed if we remove the POST /api/set-cookie endpoint and don't have other JSON POST bodies to parse for now.
 // const bodyParser = require('body-parser'); 
 
@@ -110,8 +115,8 @@ app.use((req, res, next) => {
     if (cookie) {
         try {
             requestConfig.cookie = decodeURIComponent(cookie);
-        } catch (e) {
-            console.error(`[server.js] Error decoding cookie from request: ${cookie}`, e.message);
+        } catch {
+            console.error('[server.js] Could not decode the supplied cookie value.');
         }
     }
     if (region) {
@@ -131,8 +136,8 @@ app.use((req, res, next) => {
     if (scraperApiKey) {
         try {
             requestConfig.scraper_api_key = decodeURIComponent(scraperApiKey);
-        } catch (e) {
-            console.error(`[server.js] Error decoding scraper_api_key from request: ${scraperApiKey}`, e.message);
+        } catch {
+            console.error('[server.js] Could not decode the supplied scraper API key.');
         }
     }
     // Parse multi-cookies param (encoded JSON array)
@@ -144,8 +149,8 @@ app.use((req, res, next) => {
                 // Store as array of strings
                 requestConfig.cookies = parsed.filter(c => typeof c === 'string' && c.trim().length > 0);
             }
-        } catch (e) {
-            console.error(`[server.js] Error parsing cookies array from request: ${cookiesParam}`, e.message);
+        } catch {
+            console.error('[server.js] Could not parse the supplied cookies array.');
         }
     }
     if (excludeCodecs) {
@@ -194,7 +199,7 @@ app.use((req, res, next) => {
 
     // Log the full URL for debugging (mask the cookie value and API key for privacy)
     const fullUrl = req.originalUrl || req.url;
-    let maskedUrl = fullUrl.replace(/cookie=([^&/]+)/g, 'cookie=[MASKED]');
+    let maskedUrl = fullUrl.replace(/(cookies?=)[^&/]+/g, '$1[MASKED]');
     maskedUrl = maskedUrl.replace(/scraper_api_key=([^&/]+)/g, 'scraper_api_key=[MASKED]');
 
     // Only log for relevant paths to reduce noise
@@ -213,6 +218,128 @@ app.use((req, res, next) => {
 
         next();
     });
+});
+
+app.get('/nuvio-tester', (_req, res) => {
+    res.sendFile(path.join(__dirname, 'views', 'nuvio-tester.html'));
+});
+
+app.get('/api/nuvio-tester/config', (_req, res) => {
+    res.json({
+        integrations: getConfiguredAddons().map(addon => ({
+            id: addon.id,
+            name: addon.name,
+            enabled: addon.enabled,
+            status: addon.status
+        }))
+    });
+});
+
+app.get('/api/nuvio-tester/search', async (req, res) => {
+    const type = req.query.type;
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const apiKey = process.env.TMDB_API_KEY;
+    if (type !== 'movie' && type !== 'series') {
+        return res.status(400).json({ error: 'Choose movie or series search.' });
+    }
+    if (query.length < 2 || query.length > 100) {
+        return res.status(400).json({ error: 'Search text must be 2–100 characters.' });
+    }
+    if (!apiKey) {
+        return res.status(503).json({ error: 'Server-side TMDB_API_KEY is not configured.' });
+    }
+
+    try {
+        const response = await axios.get(`https://api.themoviedb.org/3/search/${type === 'movie' ? 'movie' : 'tv'}`, {
+            params: { api_key: apiKey, query, include_adult: false, language: 'en-US', page: 1 },
+            timeout: 5000,
+            maxRedirects: 0,
+            maxContentLength: 1024 * 1024
+        });
+        const results = Array.isArray(response.data.results) ? response.data.results : [];
+        return res.json({
+            results: results.slice(0, 10).map(item => ({
+                id: String(item.id),
+                type,
+                title: type === 'movie' ? item.title : item.name,
+                year: String((type === 'movie' ? item.release_date : item.first_air_date) || '').slice(0, 4),
+                overview: typeof item.overview === 'string' ? item.overview.slice(0, 500) : ''
+            }))
+        });
+    } catch (error) {
+        const reason = Number.isInteger(error.response?.status)
+            ? `HTTP ${error.response.status}`
+            : error.code === 'ECONNABORTED' ? 'timeout' : 'request error';
+        console.warn(`[Nuvio tester] TMDB search failed: ${reason}`);
+        return res.status(502).json({
+            error: error.code === 'ECONNABORTED' ? 'TMDB search timed out.' : 'TMDB search is unavailable.'
+        });
+    }
+});
+
+app.get('/api/nuvio-tester/streams', async (req, res) => {
+    const type = req.query.type;
+    const tmdbId = typeof req.query.id === 'string' ? req.query.id : '';
+    const season = Number(req.query.season);
+    const episode = Number(req.query.episode);
+    if ((type !== 'movie' && type !== 'series') || !/^\d{1,15}$/.test(tmdbId)) {
+        return res.status(400).json({ error: 'A valid movie/series type and TMDB ID are required.' });
+    }
+    if (type === 'series' && (!Number.isInteger(season) || season < 1 ||
+        !Number.isInteger(episode) || episode < 1)) {
+        return res.status(400).json({ error: 'A valid season and episode are required.' });
+    }
+
+    const id = type === 'movie'
+        ? `tmdb:${tmdbId}`
+        : `tmdb:${tmdbId}:${season}:${episode}`;
+    try {
+        const result = await requestContext.run({ config: {} }, () =>
+            addonInterface.get('stream', type, id, { nuvioTester: true }, {})
+        );
+        const diagnostics = result.nuvioTester || {};
+        const nativeProviders = Array.isArray(diagnostics.nativeProviders) ? diagnostics.nativeProviders : [];
+        const externalAddons = Array.isArray(diagnostics.externalAddons) ? diagnostics.externalAddons : [];
+        const streams = deduplicateStreams([
+            ...nativeProviders.flatMap(provider =>
+                (Array.isArray(provider.streams) ? provider.streams : []).map(stream =>
+                    normalizeStream({
+                        ...(stream && typeof stream === 'object' ? stream : {}),
+                        provider: stream && typeof stream === 'object' && stream.provider || provider.provider
+                    }, { name: provider.provider })
+                )
+            ),
+            ...externalAddons.flatMap(addon => Array.isArray(addon.streams) ? addon.streams : [])
+        ]);
+        if (streams.length === 0 && Array.isArray(result.streams)) {
+            streams.push(...result.streams.map(stream =>
+                normalizeStream(stream, { name: stream.provider || 'Nuvio' })
+            ));
+        }
+        return res.json({
+            streams,
+            providers: [
+                ...nativeProviders.map(({ provider, status, resultCount }) => ({
+                    name: provider,
+                    status,
+                    resultCount
+                })),
+                ...externalAddons.map(({ id, name, status, error, streams: addonStreams }) => ({
+                    id,
+                    name,
+                    status,
+                    error,
+                    resultCount: Array.isArray(addonStreams) ? addonStreams.length : 0
+                }))
+            ]
+        });
+    } catch (error) {
+        const reason = Number.isInteger(error.response?.status)
+            ? `HTTP ${error.response.status}`
+            : error.code === 'ECONNABORTED' ? 'timeout' : 'request error';
+        console.error(`[Nuvio tester] Stream lookup failed: ${reason}`);
+        return res.status(502).json({ error: 'Nuvio stream lookup failed.' });
+    }
 });
 
 // REMOVE: API endpoint for setting a custom cookie (/api/set-cookie)
@@ -234,7 +361,7 @@ app.post('/api/validate-cookie', async (req, res) => {
     const cookieForRequest = cookie.startsWith('ui=') ? cookie : `ui=${cookie}`;
     const tokenForHeader = cookie.startsWith('ui=') ? cookie.slice(3) : cookie; // for ui-token header
 
-    console.log(`[validate-cookie] Testing cookie: ${cookie.substring(0, 15)}...`);
+    console.log('[validate-cookie] Testing supplied cookie.');
 
     try {
         // PRIMARY VALIDATION: Use febbox.andresdev.org lightweight API
@@ -267,8 +394,8 @@ app.post('/api/validate-cookie', async (req, res) => {
             }
 
             console.log(`[validate-cookie] PRIMARY did not confirm validity (status ${primaryResponse.status}). Falling back...`);
-        } catch (primaryErr) {
-            console.warn(`[validate-cookie] PRIMARY API error, falling back: ${primaryErr.message}`);
+        } catch {
+            console.warn('[validate-cookie] PRIMARY API error, falling back.');
             // continue to fallback flow below
         }
 
@@ -433,9 +560,7 @@ app.use((req, res, next) => {
 
         // Log the full URL with cookie masked for privacy
         const fullUrl = req.protocol + '://' + req.get('host') + req.originalUrl;
-        const maskedUrl = userCookie ?
-            fullUrl.replace(userCookie, '***COOKIE-MASKED***') :
-            fullUrl;
+        const maskedUrl = fullUrl.replace(/(cookies?=|scraper_api_key=)[^&/]+/g, '$1[MASKED]');
         console.log(`Full request URL: ${maskedUrl}`);
     }
 
@@ -476,7 +601,7 @@ app.use((req, res, next) => {
         const originalQuery = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
         req.url = `/stream/${type}/${id}.json${originalQuery}`;
 
-        console.log(`[server.js] Rewritten URL: ${req.url}`);
+        console.log('[server.js] Rewrote path-based stream request URL.');
     }
 
     next();

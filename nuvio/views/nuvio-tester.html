@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nuvio Streams Tester</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#131b2e;--line:#293651;--text:#edf2ff;--muted:#9aa9c5;--accent:#8b9dff;--green:#5ee0a0;--red:#ff8b9a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:28px 16px 56px}h1{margin:0;font-size:clamp(25px,4vw,36px)}h2{font-size:18px;margin:0 0 12px}.muted{color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:18px;margin:15px 0}.row{display:flex;gap:10px;align-items:end}.field{display:flex;flex-direction:column;gap:5px;flex:1}label{font-size:12px;color:var(--muted)}input,select,button{font:inherit;border:1px solid var(--line);border-radius:9px;padding:10px;background:#0b1222;color:var(--text)}button{background:var(--accent);color:#0b1020;font-weight:750;cursor:pointer}button:disabled{opacity:.55}.hidden{display:none!important}.chips,.metadata{display:flex;gap:7px;flex-wrap:wrap}.chip,.tag{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:3px 9px;color:var(--muted)}.chip.enabled,.success{color:var(--green)}.error,.unavailable{color:var(--red)}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px}.card,.stream{background:#0e1728;border:1px solid var(--line);border-radius:11px;padding:12px}.card{cursor:pointer}.card:hover{border-color:var(--accent)}.title{font-weight:750}.stream{margin:9px 0}.streamtop{display:flex;justify-content:space-between;gap:10px}.meta{font-size:12px;color:var(--muted);margin:7px 0}.status{font-size:12px}.group{margin-top:16px}.empty,.notice{padding:12px;color:var(--muted);border:1px dashed var(--line);border-radius:9px}.notice{margin:12px 0}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}a{color:var(--accent);overflow-wrap:anywhere}@media(max-width:600px){.row{align-items:stretch;flex-direction:column}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Nuvio Streams Tester</h1>
+    <p class="muted">Search a movie or series episode and inspect provider results. Torrent sources are discovery results, not playable streams.</p>
+  </header>
+  <section class="panel">
+    <h2>Configured integrations</h2>
+    <div id="integrations" class="chips"><span class="muted">Loading…</span></div>
+  </section>
+  <section class="panel">
+    <h2>Search catalog</h2>
+    <form id="searchForm" class="row">
+      <div class="field"><label for="type">Content</label><select id="type"><option value="movie">Movie</option><option value="series">Series</option></select></div>
+      <div class="field"><label for="query">Title</label><input id="query" minlength="2" maxlength="100" required placeholder="Search title"></div>
+      <button id="searchButton" type="submit">Search</button>
+    </form>
+    <div id="searchMessage" class="notice hidden" role="status"></div>
+    <div id="searchResults" class="cards"></div>
+  </section>
+  <section id="selectedPanel" class="panel hidden">
+    <h2 id="selectedTitle">Selected title</h2>
+    <div id="episodeFields" class="row hidden">
+      <div class="field"><label for="season">Season</label><input id="season" type="number" min="1" value="1"></div>
+      <div class="field"><label for="episode">Episode</label><input id="episode" type="number" min="1" value="1"></div>
+    </div>
+    <div class="actions"><button id="findStreams" type="button">Find streams</button></div>
+    <div id="streamMessage" class="notice hidden" role="status"></div>
+    <h2>Provider status</h2><div id="providerStatuses" class="chips"></div>
+    <h2 style="margin-top:20px">Results grouped by source</h2>
+    <div id="streamResults"></div>
+  </section>
+</main>
+<script>
+const byId = id => document.getElementById(id);
+let selected = null;
+function showMessage(id, text, isError = false) {
+  const element = byId(id);
+  element.textContent = text;
+  element.classList.remove('hidden', 'error');
+  if (isError) element.classList.add('error');
+}
+function hideMessage(id) {
+  byId(id).classList.add('hidden');
+}
+function makeTag(text, className = '') {
+  const tag = document.createElement('span');
+  tag.className = `tag ${className}`;
+  tag.textContent = text;
+  return tag;
+}
+async function loadIntegrations() {
+  const target = byId('integrations');
+  try {
+    const response = await fetch('/api/nuvio-tester/config');
+    const data = await response.json();
+    target.replaceChildren();
+    for (const integration of data.integrations || []) {
+      const chip = document.createElement('span');
+      chip.className = `chip ${integration.enabled ? 'enabled' : integration.status === 'invalid_configuration' ? 'error' : ''}`;
+      chip.textContent = `${integration.name}: ${integration.status || (integration.enabled ? 'enabled' : 'disabled')}`;
+      target.append(chip);
+    }
+    if (!target.childElementCount) target.textContent = 'No optional integrations configured.';
+  } catch {
+    target.textContent = 'Integration status unavailable.';
+  }
+}
+byId('searchForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = byId('searchButton');
+  button.disabled = true;
+  byId('searchResults').replaceChildren();
+  hideMessage('searchMessage');
+  try {
+    const params = new URLSearchParams({ type: byId('type').value, q: byId('query').value.trim() });
+    const response = await fetch(`/api/nuvio-tester/search?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Search unavailable.');
+    const results = Array.isArray(data.results) ? data.results : [];
+    if (!results.length) showMessage('searchMessage', 'No matching titles found.');
+    for (const item of results) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'card';
+      const name = document.createElement('div');
+      name.className = 'title';
+      name.textContent = item.title || 'Untitled';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = [item.year, item.type === 'series' ? 'Series' : 'Movie'].filter(Boolean).join(' · ');
+      card.append(name, meta);
+      card.addEventListener('click', () => selectTitle(item));
+      byId('searchResults').append(card);
+    }
+  } catch (error) {
+    showMessage('searchMessage', error.message || 'Search unavailable.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+function selectTitle(item) {
+  selected = item;
+  byId('selectedTitle').textContent = `${item.title || 'Untitled'}${item.year ? ` (${item.year})` : ''}`;
+  byId('episodeFields').classList.toggle('hidden', item.type !== 'series');
+  byId('selectedPanel').classList.remove('hidden');
+  byId('providerStatuses').replaceChildren();
+  byId('streamResults').replaceChildren();
+  hideMessage('streamMessage');
+  byId('selectedPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function validHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+function appendStream(group, stream) {
+  const card = document.createElement('article');
+  card.className = `stream ${stream.classification || 'unavailable'}`;
+  const top = document.createElement('div');
+  top.className = 'streamtop';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = stream.title || stream.filename || stream.name || 'Untitled result';
+  top.append(title, makeTag(stream.classification || 'unavailable', stream.classification || ''));
+  const detail = document.createElement('div');
+  detail.className = 'meta';
+  detail.textContent = [
+    stream.quality,
+    stream.releaseInfo,
+    stream.filename,
+    stream.language || (Array.isArray(stream.languages) ? stream.languages.join(', ') : ''),
+    stream.codec,
+    stream.audio,
+    Array.isArray(stream.sources) ? `Sources: ${stream.sources.join(', ')}` : '',
+    stream.size ? String(stream.size) : '',
+    Number.isFinite(stream.seeders) ? `${stream.seeders} seeders` : ''
+  ].filter(Boolean).join(' · ');
+  card.append(top);
+  if (detail.textContent) card.append(detail);
+  if (stream.classification === 'discovered') {
+    const hashOrMagnet = stream.infoHash || stream.magnet;
+    if (hashOrMagnet) {
+      const source = document.createElement('div');
+      source.className = 'meta';
+      source.textContent = stream.infoHash ? `Info-hash: ${stream.infoHash}` : 'Magnet source discovered (tracker details hidden).';
+      card.append(source);
+    }
+  }
+  if (stream.classification === 'playable' && validHttpUrl(stream.url)) {
+    const link = document.createElement('a');
+    link.href = stream.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Open HTTP(S) stream';
+    card.append(link);
+  }
+  group.append(card);
+}
+byId('findStreams').addEventListener('click', async () => {
+  if (!selected) return;
+  const button = byId('findStreams');
+  button.disabled = true;
+  button.textContent = 'Searching…';
+  byId('providerStatuses').replaceChildren();
+  byId('streamResults').replaceChildren();
+  hideMessage('streamMessage');
+  try {
+    const params = new URLSearchParams({ type: selected.type, id: selected.id });
+    if (selected.type === 'series') {
+      params.set('season', byId('season').value);
+      params.set('episode', byId('episode').value);
+    }
+    const response = await fetch(`/api/nuvio-tester/streams?${params}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Stream lookup failed.');
+    for (const provider of data.providers || []) {
+      const label = `${provider.name}: ${provider.status} (${provider.resultCount || 0})`;
+      byId('providerStatuses').append(makeTag(label, provider.status === 'success' ? 'success' : provider.status === 'error' || provider.status === 'timeout' ? 'error' : ''));
+    }
+    const groups = new Map();
+    for (const stream of data.streams || []) {
+      const source = stream.source || stream.addon || 'Unknown source';
+      if (!groups.has(source)) {
+        const wrapper = document.createElement('section');
+        wrapper.className = 'group';
+        const heading = document.createElement('h3');
+        heading.textContent = source;
+        wrapper.append(heading);
+        groups.set(source, wrapper);
+      }
+      appendStream(groups.get(source), stream);
+    }
+    for (const group of groups.values()) byId('streamResults').append(group);
+    if (!groups.size) showMessage('streamMessage', 'No streams or torrent discoveries were returned.');
+  } catch (error) {
+    showMessage('streamMessage', error.message || 'Stream lookup failed.', true);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Find streams';
+  }
+});
+loadIntegrations();
+</script>
+</body>
+</html>

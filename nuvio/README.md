@@ -51,3 +51,55 @@ Run the mocked availability tests from this directory with `npm test`; the tests
 ## Source provenance
 
 The `nuvio/` application files originate from upstream Nuvio Streams, distributed under the license included in `nuvio/LICENSE`. The committed upstream `cookies.txt` was intentionally not copied.
+
+## Nuvio-only diagnostic tester
+
+The Nuvio service includes a separate tester page at:
+
+```text
+http://YOUR_VPS_HOST:17000/nuvio-tester
+```
+
+It uses the server-side `TMDB_API_KEY` from `.env` for catalog search and does not ask the browser for that key. The page searches movies or series, accepts season/episode numbers for TV, shows provider status and counts, and groups results by source. An `HTTP(S)` source is classified as playable; a magnet or info-hash is shown as discovered only. A discovery is not playback: the add-on still declares `p2pNotSupported: true`, and no torrent playback engine is part of this deployment.
+
+## Optional Stremio add-ons
+
+Magnetio and AIOStreams are independently disabled by default. To enable either integration, configure its actual Stremio manifest URL in the private `.env` file:
+
+```dotenv
+ENABLE_MAGNETIO_ADDON=true
+MAGNETIO_MANIFEST_URL=https://your-configured-magnetio-host/manifest.json
+ENABLE_AIOSTREAMS_ADDON=true
+AIOSTREAMS_MANIFEST_URL=https://your-configured-aiostreams-host/manifest.json
+```
+
+Use the real manifest URL supplied by each deployment; do not copy the example hosts literally. If a URL includes a private path or query token, treat it like a credential. The adapter verifies the manifest's `stream` resource, content type, and declared ID prefixes before using the Stremio `/stream/{type}/{id}.json` endpoint. Each upstream has bounded manifest/stream request timeouts and is isolated from the other providers. Configured URLs are not returned to the browser or written to adapter logs; the tester displays only sanitized status summaries such as timeout or HTTP status. The adapter does not import unconfigured upstream add-ons, require debrid, or forward torrent hashes/magnets as playable streams.
+
+The tester route is on the existing Nuvio service and port; it does not add a Docker port or change the root VidSrc tester. The service uses the existing Compose `env_file` mechanism, so these variables belong in `.env`, not in a second configuration source.
+
+Native provider calls remain concurrent and use the existing 45-second per-provider/shared response ceiling; completed provider results are retained when that ceiling is reached. The timeout status shown by the tester is explicit, while an empty native result can remain ambiguous because some existing provider handlers intentionally return an empty list for either no match or an internal failure. Existing failed/empty cache records are treated as misses and retried rather than being permanent empty-result hits.
+
+## Phase B review and deployment commands
+
+From the repository checkout:
+
+```bash
+cd ~/stream-test/nuvio-streams-test
+npm --prefix nuvio test
+git -c core.whitespace=cr-at-eol diff --check
+git diff -- README.md nuvio
+```
+
+After reviewing and approving the changes, rebuild and recreate only the existing Nuvio service:
+
+```bash
+cd ~/stream-test/nuvio-streams-test/nuvio
+docker compose config -q
+docker compose up -d --build nuvio-streams
+docker compose ps nuvio-streams
+curl -fsS http://127.0.0.1:17000/health
+curl -fsS http://127.0.0.1:17000/nuvio-tester >/dev/null
+docker compose logs --tail=100 nuvio-streams
+```
+
+The rebuild is needed for changed application source; no other service or host port should be recreated or exposed.

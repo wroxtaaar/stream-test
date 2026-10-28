@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
     parseSearchResults,
     selectBestMatch,
+    filterLinksForEpisode,
     toAbsoluteHttpUrl
 } = require('../providers/hdhub4u');
 
@@ -43,6 +44,14 @@ const tests = [
             selectBestMatch(seasonResults, 'Example Show', null, 'tv', 1).url,
             'https://hdhub4u.example/s1/'
         );
+    }],
+    ['returns only links for the requested TV episode', () => {
+        const episodeLinks = [
+            { url: 'https://files.example/s01e01.mp4', episode: 1 },
+            { url: 'https://files.example/s01e02.mp4', episode: 2 },
+            { url: 'https://files.example/unknown.mp4', episode: null }
+        ];
+        assert.deepStrictEqual(filterLinksForEpisode(episodeLinks, 2), [episodeLinks[1]]);
     }],
     ['resolves relative URLs and preserves valid absolute HTTP(S) URLs', () => {
         assert.strictEqual(

@@ -1,11 +1,9 @@
 # Stream Test
 
-This repository contains isolated stream-provider experiments. Each provider test lives on its own branch or subdirectory so existing experiments remain unchanged.
+This repository contains isolated stream-provider experiments and the original Stream Test app at the repository root.
 
-## Nuvio Streams test deployment
+## Nuvio Streams
 
-See [nuvio/README.md](nuvio/README.md) for the Docker wrapper deployment instructions and current upstream import status.
+The [Nuvio add-on](nuvio/) contains the vendored application source, provider experiments, Docker deployment, and optional Stremio-protocol integrations. It retains the existing host-port mapping and `p2pNotSupported: true` manifest behavior.
 
-> **Status:** The current Nuvio wrapper is runnable but is not a functional stream resolver. It must be wired to the full upstream add-on source before actual streams can be resolved.
-
-The original Stream Test app remains at the repository root.
+See [nuvio/README.md](nuvio/README.md) for deployment, configuration, the Nuvio-only tester at `/nuvio-tester`, and limitations. Optional Magnetio and AIOStreams integrations are disabled unless explicitly enabled and configured with their manifest URLs.

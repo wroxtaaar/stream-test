@@ -22,6 +22,11 @@ const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto'); // For hashing cookies
 const Redis = require('ioredis');
+const {
+    isHttpUrl,
+    queryConfiguredAddons,
+    toNuvioStreams
+} = require('./utils/stremioAddonAdapter');
 
 // Add Redis client if enabled
 const USE_REDIS_CACHE = process.env.USE_REDIS_CACHE === 'true';
@@ -174,10 +179,10 @@ const EXTERNAL_MOVIESMOD_URL = USE_EXTERNAL_PROVIDERS ? process.env.EXTERNAL_MOV
 
 console.log(`[addon.js] External providers: ${USE_EXTERNAL_PROVIDERS ? 'enabled' : 'disabled'}`);
 if (USE_EXTERNAL_PROVIDERS) {
-    console.log(`[addon.js] External UHDMovies URL: ${EXTERNAL_UHDMOVIES_URL || 'Not configured (using local)'}`);
+    console.log(`[addon.js] External UHDMovies service: ${EXTERNAL_UHDMOVIES_URL ? 'configured' : 'not configured (using local)'}`);
     // (Removed) External DramaDrip URL log
-    console.log(`[addon.js] External TopMovies URL: ${EXTERNAL_TOPMOVIES_URL || 'Not configured (using local)'}`);
-    console.log(`[addon.js] External MoviesMod URL: ${EXTERNAL_MOVIESMOD_URL || 'Not configured (using local)'}`);
+    console.log(`[addon.js] External TopMovies service: ${EXTERNAL_TOPMOVIES_URL ? 'configured' : 'not configured (using local)'}`);
+    console.log(`[addon.js] External MoviesMod service: ${EXTERNAL_MOVIESMOD_URL ? 'configured' : 'not configured (using local)'}`);
 } else {
     console.log(`[addon.js] All providers will use local implementations`);
 }
@@ -216,7 +221,7 @@ async function fetchFromExternalProvider(baseUrl, providerName, tmdbId, type, se
         if (episode !== null) queryParams.append('episode', episode);
 
         const fullUrl = `${url}?${queryParams.toString()}`;
-        console.log(`[External Provider] Making request to: ${fullUrl}`);
+        console.log(`[External Provider] Requesting configured ${providerName} service.`);
 
         const response = await axios.get(fullUrl, {
             timeout: 30000, // 30 second timeout
@@ -228,11 +233,14 @@ async function fetchFromExternalProvider(baseUrl, providerName, tmdbId, type, se
         if (response.data && response.data.success) {
             return response.data.streams || [];
         } else {
-            console.error(`[External Provider] Request failed:`, response.data?.error || 'Unknown error');
+            console.error(`[External Provider] ${providerName} service returned an unsuccessful response.`);
             return [];
         }
     } catch (error) {
-        console.error(`[External Provider] Error making request to ${baseUrl}/api/streams/${providerName.toLowerCase()}/${tmdbId}:`, error.message);
+        const reason = Number.isInteger(error.response?.status)
+            ? `HTTP ${error.response.status}`
+            : error.code === 'ECONNABORTED' ? 'timeout' : 'request error';
+        console.error(`[External Provider] ${providerName} service failed: ${reason}`);
         return [];
     }
 }
@@ -374,13 +382,13 @@ function filterStreamsByCodecs(streams, excludeCodecSettings, providerName) {
 
         // Check for DV exclusion
         if (excludeDV && stream.codecs.includes('DV')) {
-            console.log(`[${providerName}] Excluding stream with DV codec: ${stream.title || stream.url}`);
+            console.log(`[${providerName}] Excluding stream with DV codec.`);
             return false;
         }
 
         // Check for HDR exclusion (including HDR, HDR10, HDR10+)
         if (excludeHDR && (stream.codecs.includes('HDR') || stream.codecs.includes('HDR10') || stream.codecs.includes('HDR10+'))) {
-            console.log(`[${providerName}] Excluding stream with HDR codec: ${stream.title || stream.url}`);
+            console.log(`[${providerName}] Excluding stream with HDR codec.`);
             return false;
         }
 
@@ -407,22 +415,26 @@ async function fetchWithRetry(url, options, maxRetries = MAX_RETRIES) {
         try {
             const response = await fetchFunction(url, options); // Use the dynamically imported function
             if (!response.ok) {
-                let errorBody = '';
                 try {
-                    errorBody = await response.text();
+                    await response.text();
                 } catch (e) { /* ignore */ }
-                throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}. Body: ${errorBody.substring(0, 200)}`);
+                const error = new Error(`HTTP error: ${response.status}`);
+                error.status = response.status;
+                throw error;
             }
             return response;
         } catch (error) {
             lastError = error;
-            console.warn(`Fetch attempt ${attempt}/${maxRetries} failed for ${url}: ${error.message}`);
+            const reason = Number.isInteger(error.status)
+                ? `HTTP ${error.status}`
+                : error.code || error.name || 'request failed';
+            console.warn(`Fetch attempt ${attempt}/${maxRetries} failed for TMDB request: ${reason}`);
             if (attempt < maxRetries) {
                 await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * Math.pow(2, attempt - 1)));
             }
         }
     }
-    console.error(`All fetch attempts failed for ${url}. Last error:`, lastError.message);
+    console.error(`All TMDB fetch attempts failed: ${lastError?.code || lastError?.name || 'request failed'}`);
     throw lastError;
 }
 
@@ -820,11 +832,9 @@ builder.defineStreamHandler(async (args) => {
         console.log(`[addon.js] No codec exclude preferences set by user.`);
     }
 
-    console.log("--- FULL ARGS OBJECT (from SDK) ---");
-    console.log(JSON.stringify(args, null, 2));
-    console.log("--- SDK ARGS.CONFIG (still logging for comparison) ---");
-    console.log(JSON.stringify(sdkConfig, null, 2)); // Log the original sdkConfig
-    console.log("---------------------------------");
+    const extraKeys = args.extra && typeof args.extra === 'object' ? Object.keys(args.extra) : [];
+    const configKeys = sdkConfig && typeof sdkConfig === 'object' ? Object.keys(sdkConfig) : [];
+    console.log(`[addon.js] SDK stream request: type=${type}, id=${id}, extraKeys=${extraKeys.join(',') || 'none'}, configKeys=${configKeys.join(',') || 'none'}`);
 
     // Helper to get flag emoji from URL hostname
     const getFlagEmojiForUrl = (url) => {
@@ -990,7 +1000,7 @@ builder.defineStreamHandler(async (args) => {
                 detailsUrl = `${TMDB_API_URL}/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
             }
 
-            console.log(`Fetching details from TMDB: ${detailsUrl}`);
+            console.log(`Fetching TMDB details for ${tmdbTypeFromId}/${tmdbId}.`);
             const tmdbDetailsResponse = await fetchWithRetry(detailsUrl, {});
             if (!tmdbDetailsResponse.ok) throw new Error(`TMDB API error: ${tmdbDetailsResponse.status}`);
             const tmdbDetails = await tmdbDetailsResponse.json();
@@ -1007,7 +1017,7 @@ builder.defineStreamHandler(async (args) => {
             // NEW: Fetch season-specific title for TV shows
             if (tmdbTypeFromId === 'tv' && seasonNum) {
                 const seasonDetailsUrl = `${TMDB_API_URL}/tv/${tmdbId}/season/${seasonNum}?api_key=${TMDB_API_KEY}&language=en-US`;
-                console.log(`Fetching season details from TMDB: ${seasonDetailsUrl}`);
+                console.log(`Fetching TMDB season details for ${tmdbId}, season ${seasonNum}.`);
                 try {
                     const seasonDetailsResponse = await fetchWithRetry(seasonDetailsUrl, {});
                     if (seasonDetailsResponse.ok) {
@@ -1016,7 +1026,7 @@ builder.defineStreamHandler(async (args) => {
                         console.log(`  Fetched season title: "${seasonTitle}"`);
                     }
                 } catch (e) {
-                    console.warn(`Could not fetch season-specific title: ${e.message}`);
+                    console.warn(`Could not fetch season-specific title: ${e.code || e.name || 'request failed'}`);
                 }
             }
 
@@ -1029,7 +1039,7 @@ builder.defineStreamHandler(async (args) => {
             }
 
         } catch (e) {
-            console.error(`  Error fetching details from TMDB: ${e.message}`);
+            console.error(`  Error fetching TMDB details: ${e.code || e.name || 'request failed'}`);
         }
     } else if (tmdbId && !TMDB_API_KEY) {
         console.warn("TMDB_API_KEY is not configured. Cannot fetch full title/year/genres.");
@@ -1049,6 +1059,7 @@ builder.defineStreamHandler(async (args) => {
     }
 
     let combinedRawStreams = [];
+    let nativeProviderDiagnostics = [];
 
     // --- Provider Selection Logic ---
     const shouldFetch = (providerId) => {
@@ -1057,16 +1068,34 @@ builder.defineStreamHandler(async (args) => {
     };
 
     // Helper for timing provider fetches
+    const timedOutProviders = new Set();
     const timeProvider = async (providerName, fetchPromise) => {
         const startTime = Date.now();
-        const result = await fetchPromise;
-        const endTime = Date.now();
-        providerTimings[providerName] = formatDuration(endTime - startTime);
-        return result;
+        const timeoutMs = 45000;
+        let timer;
+        try {
+            return await Promise.race([
+                Promise.resolve(fetchPromise),
+                new Promise(resolve => {
+                    timer = setTimeout(() => {
+                        timedOutProviders.add(providerName);
+                        console.warn(`[${providerName}] Timed out after ${timeoutMs}ms; continuing with other providers.`);
+                        resolve([]);
+                    }, timeoutMs);
+                })
+            ]);
+        } finally {
+            clearTimeout(timer);
+            providerTimings[providerName] = formatDuration(Date.now() - startTime);
+        }
     };
 
     // --- NEW: Asynchronous provider fetching with caching ---
     console.log('[Stream Cache] Checking cache for all enabled providers...');
+    const externalAddonPromise = queryConfiguredAddons(
+        { type, id },
+        { selectedProviders: selectedProvidersArray }
+    );
 
     const providerFetchFunctions = {
         // ShowBox provider with cache integration
@@ -1351,7 +1380,7 @@ builder.defineStreamHandler(async (args) => {
 
                 // Check if external service URL is configured
                 if (EXTERNAL_UHDMOVIES_URL) {
-                    console.log(`[UHDMovies] Using external service: ${EXTERNAL_UHDMOVIES_URL}`);
+                    console.log('[UHDMovies] Using configured external service.');
                     streams = await fetchFromExternalProvider(EXTERNAL_UHDMOVIES_URL, 'uhdmovies', tmdbId, tmdbTypeFromId, seasonNum, episodeNum);
                 } else {
                     console.log(`[UHDMovies] Using local provider`);
@@ -1402,7 +1431,7 @@ builder.defineStreamHandler(async (args) => {
 
                 // Check if external service URL is configured
                 if (EXTERNAL_MOVIESMOD_URL) {
-                    console.log(`[MoviesMod] Using external service: ${EXTERNAL_MOVIESMOD_URL}`);
+                    console.log('[MoviesMod] Using configured external service.');
                     streams = await fetchFromExternalProvider(EXTERNAL_MOVIESMOD_URL, 'moviesmod', tmdbId, tmdbTypeFromId, seasonNum, episodeNum);
                 } else {
                     console.log(`[MoviesMod] Using local provider`);
@@ -1459,7 +1488,7 @@ builder.defineStreamHandler(async (args) => {
 
                 // Check if external service URL is configured
                 if (EXTERNAL_TOPMOVIES_URL) {
-                    console.log(`[TopMovies] Using external service: ${EXTERNAL_TOPMOVIES_URL}`);
+                    console.log('[TopMovies] Using configured external service.');
                     streams = await fetchFromExternalProvider(EXTERNAL_TOPMOVIES_URL, 'topmovies', tmdbId, tmdbTypeFromId);
                 } else {
                     console.log(`[TopMovies] Using local provider`);
@@ -1704,8 +1733,8 @@ builder.defineStreamHandler(async (args) => {
     console.log('Running parallel provider fetches with caching...');
 
     try {
-        // Execute all provider functions in parallel with 10-second timeout
-        const PROVIDER_TIMEOUT_MS = 45000; // 10 seconds
+        // Providers have individual 45-second limits; the overall response uses the same ceiling.
+        const PROVIDER_TIMEOUT_MS = 45000;
         const providerPromises = [
             timeProvider('ShowBox', providerFetchFunctions.showbox()),
             timeProvider('Soaper TV', providerFetchFunctions.soapertv()),
@@ -1722,37 +1751,35 @@ builder.defineStreamHandler(async (args) => {
             timeProvider('MovieBox', providerFetchFunctions.moviebox())
         ];
 
-        // Implement proper timeout that returns results immediately after 10 seconds
+        // Return completed providers when the shared 45-second request ceiling is reached.
         let providerResults;
-        let timeoutOccurred = false;
 
-        const timeoutPromise = new Promise((resolve) => {
-            setTimeout(() => {
-                timeoutOccurred = true;
-                console.log(`[Timeout] 30-second timeout reached. Returning fetched links so far.`);
+        const providerStates = new Array(providerPromises.length).fill(null);
+        const trackedProviderPromises = providerPromises.map((promise, index) =>
+            Promise.resolve(promise).then(
+                value => (providerStates[index] = { status: 'fulfilled', value }),
+                reason => (providerStates[index] = { status: 'rejected', reason })
+            )
+        );
+        const settledPromise = Promise.all(trackedProviderPromises);
+        let timeoutTimer;
+        const boundedTimeoutPromise = new Promise(resolve => {
+            timeoutTimer = setTimeout(() => {
+                console.log(`[Timeout] ${PROVIDER_TIMEOUT_MS / 1000}-second request limit reached. Returning completed providers.`);
                 resolve('timeout');
             }, PROVIDER_TIMEOUT_MS);
         });
 
-        // Start all providers and race against timeout
-        const settledPromise = Promise.allSettled(providerPromises);
-        const raceResult = await Promise.race([settledPromise, timeoutPromise]);
+        const raceResult = await Promise.race([settledPromise, boundedTimeoutPromise]);
+        clearTimeout(timeoutTimer);
 
         if (raceResult === 'timeout') {
             // Timeout occurred, collect results from completed providers only
             console.log(`[Timeout] Collecting results from completed providers...`);
 
-            // Give a brief moment for any providers that might be just finishing
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // Get current state of all promises
-            const currentResults = await Promise.allSettled(providerPromises.map(p =>
-                Promise.race([p, Promise.resolve([])])
-            ));
-
-            providerResults = currentResults.map((result, index) => {
+            providerResults = providerStates.map((result, index) => {
                 const providerNames = ['ShowBox', 'Soaper TV', 'VidSrc', 'VidZee', 'MP4Hydra', 'UHDMovies', 'MoviesMod', 'TopMovies', 'MoviesDrive', '4KHDHub', 'HDHub4u', 'Vixsrc', 'MovieBox'];
-                if (result.status === 'fulfilled' && Array.isArray(result.value) && result.value.length > 0) {
+                if (result?.status === 'fulfilled' && Array.isArray(result.value) && result.value.length > 0) {
                     console.log(`[Timeout] Provider ${providerNames[index]} completed with ${result.value.length} streams.`);
                     return result.value;
                 } else {
@@ -1763,7 +1790,7 @@ builder.defineStreamHandler(async (args) => {
         } else {
             // All providers completed within timeout
             providerResults = raceResult.map(result => {
-                if (result.status === 'fulfilled') {
+                if (result.status === 'fulfilled' && Array.isArray(result.value)) {
                     return result.value;
                 } else {
                     return [];
@@ -1787,6 +1814,12 @@ builder.defineStreamHandler(async (args) => {
             'Vixsrc': ENABLE_VIXSRC_PROVIDER && shouldFetch('vixsrc') ? applyAllStreamFilters(providerResults[11], 'Vixsrc', minQualitiesPreferences.vixsrc, excludeCodecsPreferences.vixsrc) : [],
             'MovieBox': ENABLE_MOVIEBOX_PROVIDER && shouldFetch('moviebox') ? applyAllStreamFilters(providerResults[12], 'MovieBox', minQualitiesPreferences.moviebox, excludeCodecsPreferences.moviebox) : []
         };
+        nativeProviderDiagnostics = Object.entries(streamsByProvider).map(([provider, streams]) => ({
+            provider,
+            status: streams.length ? 'success' : timedOutProviders.has(provider) ? 'timeout' : 'no_results_or_provider_error',
+            resultCount: streams.length,
+            streams: args.extra && args.extra.nuvioTester === true ? streams : undefined
+        }));
 
         // Sort streams for each provider by quality, then size
         console.log('Sorting streams for each provider by quality, then size...');
@@ -1817,6 +1850,14 @@ builder.defineStreamHandler(async (args) => {
             }
         });
 
+        const externalAddonResults = await externalAddonPromise;
+        for (const result of externalAddonResults) {
+            if (result.status !== 'disabled' && result.status !== 'not_selected') {
+                console.log(`[External Addon] ${result.name}: ${result.status}; ${result.streams.length} result(s).`);
+            }
+        }
+        combinedRawStreams.push(...toNuvioStreams(externalAddonResults));
+
         console.log(`Total raw streams after provider-ordered fetch: ${combinedRawStreams.length}`);
 
     } catch (error) {
@@ -1826,13 +1867,20 @@ builder.defineStreamHandler(async (args) => {
 
     if (combinedRawStreams.length === 0) {
         console.log(`  No streams found from any provider for TMDB ${tmdbTypeFromId}/${tmdbId}`);
-        return { streams: [] };
+        const emptyResponse = { streams: [] };
+        if (args.extra && args.extra.nuvioTester === true) {
+            emptyResponse.nuvioTester = {
+                nativeProviders: nativeProviderDiagnostics,
+                externalAddons: await externalAddonPromise
+            };
+        }
+        return emptyResponse;
     }
 
     console.log(`Total streams after provider-level sorting: ${combinedRawStreams.length}`);
 
     // Format and send the response
-    const stremioStreamObjects = combinedRawStreams.map((stream) => {
+    const stremioStreamObjects = combinedRawStreams.filter(stream => isHttpUrl(stream.url)).map((stream) => {
         const availabilityMetadata = stream.linkAvailability ? {
             linkAvailability: {
                 ...stream.linkAvailability,
@@ -1881,6 +1929,30 @@ builder.defineStreamHandler(async (args) => {
                 behaviorHints: {
                     notWebReady: true
                 },
+                ...availabilityMetadata
+            };
+        }
+
+        if (stream.provider === 'Magnetio' || stream.provider === 'AIOStreams') {
+            const metadata = [
+                stream.title,
+                stream.filename,
+                stream.releaseInfo,
+                stream.releaseGroup && `Release group: ${stream.releaseGroup}`,
+                stream.source && `Source: ${stream.source}`,
+                stream.quality && `Quality: ${stream.quality}`,
+                stream.languages?.length && `Languages: ${stream.languages.join(', ')}`,
+                stream.audio && `Audio: ${stream.audio}`,
+                stream.codec && `Codec: ${stream.codec}`,
+                stream.size && `Size: ${stream.size}`
+            ].filter(Boolean);
+            return {
+                name: `${stream.provider} - ${stream.quality || 'UNK'}`,
+                title: metadata.join('\n'),
+                url: stream.url,
+                type: 'url',
+                availability: 2,
+                behaviorHints: stream.behaviorHints || { notWebReady: true },
                 ...availabilityMetadata
             };
         }
@@ -2166,8 +2238,10 @@ ${warningMessage}`;
     });
 
     console.log("--- BEGIN Stremio Stream Objects to be sent ---");
-    // Log first 3 streams to keep logs shorter
-    const streamSample = stremioStreamObjects.slice(0, 3);
+    const streamSample = stremioStreamObjects.slice(0, 3).map(stream => ({
+        name: stream.name,
+        type: stream.type
+    }));
     console.log(JSON.stringify(streamSample, null, 2));
     if (stremioStreamObjects.length > 3) {
         console.log(`... and ${stremioStreamObjects.length - 3} more streams`);
@@ -2211,9 +2285,14 @@ Add "4khdhub" to your provider configuration`,
         stremioStreamObjects.push(infoStream);
     }
 
-    return {
-        streams: stremioStreamObjects
-    };
+    const response = { streams: stremioStreamObjects };
+    if (args.extra && args.extra.nuvioTester === true) {
+        response.nuvioTester = {
+            nativeProviders: nativeProviderDiagnostics,
+            externalAddons: await externalAddonPromise
+        };
+    }
+    return response;
 });
 
 // Build and export the addon

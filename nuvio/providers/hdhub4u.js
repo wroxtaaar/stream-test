@@ -206,6 +206,11 @@ function selectBestMatch(searchResults, title, year, mediaType, seasonNum) {
     ) || null;
 }
 
+function filterLinksForEpisode(links, episodeNum) {
+    if (!episodeNum) return links;
+    return links.filter(link => link.episode === episodeNum);
+}
+
 function parseSearchResults(html, baseUrl = MAIN_URL) {
     const $ = cheerio.load(html);
     let results = [];
@@ -1102,10 +1107,9 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
         }
 
         // Filter links for specific episode if needed
-        let filteredLinks = finalLinks;
-        if (!isMovie && episodeNum) {
-            filteredLinks = finalLinks.filter(link => link.episode === episodeNum);
-        }
+        const filteredLinks = !isMovie
+            ? filterLinksForEpisode(finalLinks, episodeNum)
+            : finalLinks;
 
         // Keep links with missing metadata: an info lookup failure is not proof the file is absent.
         const streams = filteredLinks
@@ -1214,5 +1218,6 @@ module.exports = {
     getHDHub4uStreams,
     parseSearchResults,
     selectBestMatch,
+    filterLinksForEpisode,
     toAbsoluteHttpUrl
 };
