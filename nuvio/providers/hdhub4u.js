@@ -759,7 +759,7 @@ async function searchPingora(query) {
         const rawTitle = String(document.post_title || '').trim();
         // Keep the canonical title and explicit release year, excluding quality/audio tags.
         // This lets strict title/year matching work with full release-post titles.
-        const yearMatch = rawTitle.match(/^(.{1,180}?\b(?:19|20)\d{2}\b)/);
+        const yearMatch = rawTitle.match(/^(.{1,180}?\b(?:19|20)\d{2}\s*[)\]]?)/);
         const title = yearMatch ? yearMatch[1].trim() : rawTitle;
         return title && url ? { title, url, poster: document.post_thumbnail || null } : null;
     }).filter(Boolean);
