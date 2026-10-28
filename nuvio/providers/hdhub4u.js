@@ -756,7 +756,11 @@ async function searchPingora(query) {
         const document = hit && hit.document;
         if (!document) return null;
         const url = toAbsoluteHttpUrl(document.permalink, MAIN_URL);
-        const title = String(document.post_title || '').trim();
+        const rawTitle = String(document.post_title || '').trim();
+        // Keep the canonical title and explicit release year, excluding quality/audio tags.
+        // This lets strict title/year matching work with full release-post titles.
+        const yearMatch = rawTitle.match(/^(.{1,180}?\b(?:19|20)\d{2}\b)/);
+        const title = yearMatch ? yearMatch[1].trim() : rawTitle;
         return title && url ? { title, url, poster: document.post_thumbnail || null } : null;
     }).filter(Boolean);
 }
