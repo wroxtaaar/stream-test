@@ -7,6 +7,7 @@ const { URL } = require('url');
 const path = require('path');
 const fs = require('fs').promises;
 const RedisCache = require('../utils/redisCache');
+const { getWithRetry } = require('../utils/requestRetry');
 
 // Debug logging flag - set DEBUG=true to enable verbose logging
 const DEBUG = process.env.DEBUG === 'true' || process.env['4KHDHUB_DEBUG'] === 'true';
@@ -54,11 +55,14 @@ async function fetchText(url, options = {}) {
 
 // Fetch TMDB Details
 async function getTmdbDetails(tmdbId, type) {
+    let requestTarget = 'api.themoviedb.org';
     try {
         const isSeries = type === 'series' || type === 'tv';
         const url = `https://api.themoviedb.org/3/${isSeries ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_API_KEY}`;
-        log(`[4KHDHub] Fetching TMDB details from: ${url}`);
-        const response = await axios.get(url);
+        const requestUrl = new URL(url);
+        requestTarget = `${requestUrl.hostname}${requestUrl.pathname}`;
+        log(`[4KHDHub] Fetching TMDB details from: ${requestTarget}`);
+        const response = await getWithRetry(url, { timeout: 10000 });
         const data = response.data;
         // ...
 
@@ -74,7 +78,9 @@ async function getTmdbDetails(tmdbId, type) {
             };
         }
     } catch (error) {
-        console.error(`[4KHDHub] TMDB request failed: ${error.message}`);
+        const status = error.response && error.response.status;
+        const detail = error.code || (status ? `HTTP ${status}` : 'request failed');
+        console.error(`[4KHDHub] TMDB request failed for ${requestTarget}: ${detail}`);
         return null;
     }
 }
@@ -352,4 +358,4 @@ async function get4KHDHubStreams(tmdbId, type, season = null, episode = null) {
     return streams;
 }
 
-module.exports = { get4KHDHubStreams, resolveRedirectUrl, extractHubCloud };
+module.exports = { get4KHDHubStreams, getTmdbDetails, resolveRedirectUrl, extractHubCloud };

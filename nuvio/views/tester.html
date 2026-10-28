@@ -11,6 +11,7 @@ main{max-width:1100px;margin:auto;padding:32px 20px 64px}.top{display:flex;justi
 .panel{background:rgba(19,27,46,.94);border:1px solid var(--line);border-radius:18px;padding:20px;margin:16px 0;box-shadow:0 12px 32px #0002}.panel h2{font-size:17px;margin:0 0 14px}.row{display:flex;gap:10px;align-items:center}.field{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}label{font-size:12px;color:var(--muted)}input,select{width:100%;background:#0b1222;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:12px;font:inherit;outline:none}input:focus,select:focus{border-color:var(--accent)}button,.linkbtn{background:var(--accent);color:#0a1020;border:0;border-radius:10px;padding:11px 15px;font-weight:800;cursor:pointer;font:inherit;font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:7px}button:disabled{opacity:.45;cursor:wait}.secondary{background:#202d46;color:var(--text);border:1px solid var(--line)}.danger{color:var(--red)}.hint{font-size:12px;color:var(--muted)}.hidden{display:none!important}.results{display:grid;grid-template-columns:repeat(auto-fill,minmax(245px,1fr));gap:12px}.movie{display:flex;gap:12px;background:#10182a;border:1px solid var(--line);border-radius:14px;padding:12px;min-width:0}.poster{width:76px;height:114px;object-fit:cover;border-radius:8px;background:#26334b;flex-shrink:0}.moviebody{min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:5px}.movietitle{font-weight:800;line-height:1.3}.meta{font-size:12px;color:var(--muted)}.movie button{margin-top:auto;padding:8px 10px;font-size:12px}.pill{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:2px 8px;font-size:11px;color:var(--muted)}.stream{border:1px solid var(--line);background:#10182a;border-radius:13px;padding:15px;display:flex;gap:16px;justify-content:space-between;align-items:flex-start;margin-top:10px}.streamtitle{font-weight:700;overflow-wrap:anywhere}.streamname{font-size:12px;color:var(--accent);margin-bottom:5px}.streamactions{display:flex;flex-direction:column;gap:7px;flex-shrink:0}.streamactions button,.streamactions a{font-size:12px;padding:8px 10px}.empty{border:1px dashed var(--line);border-radius:12px;padding:24px;text-align:center;color:var(--muted)}.message{padding:12px 14px;border-radius:10px;background:#10182a;color:var(--muted);margin:12px 0}.message.error{color:var(--red);border:1px solid #663542}.message.ok{color:var(--green);border:1px solid #245b49}.spinner{display:inline-block;width:14px;height:14px;border:2px solid #68789b;border-top-color:var(--text);border-radius:50%;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}footer{text-align:center;color:var(--muted);font-size:12px;margin-top:28px}
 @media(max-width:600px){main{padding:20px 12px 40px}.top{align-items:flex-start}.status{display:none}.row{flex-direction:column;align-items:stretch}.stream{flex-direction:column}.streamactions{flex-direction:row;flex-wrap:wrap}.panel{padding:15px}}
 </style>
+<script src="/playerLaunch.js"></script>
 </head>
 <body>
 <main>
@@ -125,8 +126,9 @@ $('getStreams').onclick = async () => {
     const checkedAvailable=streams.filter(stream=>stream.linkAvailability?.status==='available').length;
     const checkedUnknown=streams.filter(stream=>stream.linkAvailability?.status==='unknown').length;
     message('streamMsg', 'Found ' + streams.length + ' stream entries. Host checks: ' + checkedAvailable + ' available, ' + checkedUnknown + ' unverified; other links were not checked. Playback is not tested.', 'ok');
-    $('streamResults').innerHTML = streams.map((stream, index) =>
-      '<article class="stream">' +
+    $('streamResults').innerHTML = streams.map((stream, index) => {
+      const streamUrl = NuvioPlayerLaunch.getValidatedStreamUrl(stream.url);
+      return '<article class="stream">' +
         '<div class="streambody">' +
           '<div class="streamname">' + safeText(stream.name || 'Stream ' + (index + 1)) + '</div>' +
           '<div class="streamtitle">' + safeText(stream.title || 'Untitled stream') + '</div>' +
@@ -145,33 +147,35 @@ $('getStreams').onclick = async () => {
           '</div>' +
         '</div>' +
         '<div class="streamactions">' +
-          '<button type="button" data-mx="' + index + '">▶ Play in MX Player</button>' +
-          '<button type="button" data-copy="' + index + '" class="secondary">Copy URL</button>' +
-          '<a class="linkbtn" href="' + safeText(stream.url || '#') + '" target="_blank" rel="noopener noreferrer">Open URL ↗</a>' +
+          '<button type="button" data-mx="' + index + '"' + (streamUrl ? '' : ' disabled title="No valid HTTP(S) stream URL"') + '>▶ Play in MX Player</button>' +
+          '<button type="button" data-copy="' + index + '" class="secondary"' + (streamUrl ? '' : ' disabled') + '>Copy URL</button>' +
+          (streamUrl ?
+            '<a class="linkbtn" href="' + safeText(streamUrl) + '" target="_blank" rel="noopener noreferrer">Open URL ↗</a>' :
+            '<button type="button" class="secondary" disabled>URL unavailable</button>') +
         '</div>' +
-      '</article>'
-    ).join('');
+      '</article>';
+    }).join('');
     window.currentStreams = streams;
     $('streamResults').querySelectorAll('[data-mx]').forEach(button => {
       button.onclick = () => {
-        const url = window.currentStreams[Number(button.dataset.mx)]?.url;
-        if (!url) {
-          message('streamMsg', 'This stream has no URL.', 'error');
+        const stream = window.currentStreams[Number(button.dataset.mx)];
+        const action = NuvioPlayerLaunch.getPlaybackAction(stream, navigator.userAgent);
+        if (action.kind === 'invalid') {
+          message('streamMsg', 'This stream does not have a valid HTTP(S) URL.', 'error');
           return;
         }
-        if (!/^https?:\/\//i.test(url) || !/Android/i.test(navigator.userAgent)) {
-          window.open(url, '_blank', 'noopener');
-          if (!/Android/i.test(navigator.userAgent)) {
-            message('streamMsg', 'On Android, tap Play in MX Player to hand this URL to MX Player. On this device, the direct URL was opened instead.');
-          }
+        if (action.kind === 'headers-required') {
+          window.open(action.url, '_blank', 'noopener,noreferrer');
+          message('streamMsg', 'This stream requires request headers that the MX Player intent cannot reliably pass. The direct URL was opened in the browser; use Open URL or Copy URL if needed.', 'error');
           return;
         }
-        const cleanUrl = url.replace(/^https?:\/\//i, '');
-        const scheme = /^https:/i.test(url) ? 'https' : 'http';
-        const intentUrl = 'intent://' + cleanUrl + '#Intent;scheme=' + scheme +
-          ';package=com.mxtech.videoplayer.ad;type=video/*;S.browser_fallback_url=' +
-          encodeURIComponent(url) + ';end';
-        window.location.href = intentUrl;
+        if (action.kind === 'browser') {
+          window.open(action.url, '_blank', 'noopener,noreferrer');
+          message('streamMsg', 'MX Player can only be launched from Android. The direct stream URL was opened in the browser; use Copy URL if the browser blocks it.');
+          return;
+        }
+        message('streamMsg', 'Opening the selected stream in MX Player. If MX Player does not open, use Open URL or Copy URL. Some hosts may download the URL instead of playing it.');
+        window.location.assign(action.intentUrl);
       };
     });
     $('streamResults').querySelectorAll('[data-copy]').forEach(button => {

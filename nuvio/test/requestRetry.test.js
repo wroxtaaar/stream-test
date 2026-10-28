@@ -1,9 +1,9 @@
 const assert = require('assert');
 const axios = require('axios');
+const http = require('http');
 const { getWithRetry } = require('../utils/requestRetry');
 
 const originalGet = axios.get;
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function run() {
     let passed = 0;
@@ -38,7 +38,32 @@ async function run() {
         assert.strictEqual(calls, 1);
     });
 
-    console.log(`\\n${passed}/3 request retry tests passed`);
-    if (passed !== 3) process.exitCode = 1;
+    await test('times out a stalled request to a local HTTP server on each attempt', async () => {
+        let requests = 0;
+        const server = http.createServer(() => {
+            requests++;
+        });
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(0, '127.0.0.1', resolve);
+        });
+
+        try {
+            const { port } = server.address();
+            await assert.rejects(
+                getWithRetry(`http://127.0.0.1:${port}/stalled`, { timeout: 100 }, 3),
+                error => error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT'
+            );
+            assert.strictEqual(requests, 3);
+        } finally {
+            server.closeAllConnections();
+            await new Promise((resolve, reject) => {
+                server.close(error => error ? reject(error) : resolve());
+            });
+        }
+    });
+
+    console.log(`\\n${passed}/4 request retry tests passed`);
+    if (passed !== 4) process.exitCode = 1;
 }
 run().finally(() => { axios.get = originalGet; });

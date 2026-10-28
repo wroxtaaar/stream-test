@@ -7,7 +7,6 @@ clea * Based on the standalone scraper from scrapersdirect/hdhub4u-scraper.js
 const axios = require('axios');
 const cheerio = require('cheerio');
 const https = require('https');
-const { findBestMatch } = require('string-similarity');
 const fs = require('fs').promises;
 const path = require('path');
 const RedisCache = require('../utils/redisCache');
@@ -18,9 +17,9 @@ const DEBUG = process.env.DEBUG === 'true' || process.env.HDHUB4U_DEBUG === 'tru
 const log = DEBUG ? console.log : () => {};
 const logWarn = DEBUG ? console.warn : () => {};
 
-// Create an https agent to ignore SSL certificate errors
+// Keep the default TLS certificate verification enabled.
 const agent = new https.Agent({
-    rejectUnauthorized: false
+    rejectUnauthorized: true
 });
 
 let MAIN_URL = "https://hdhub4u.frl"; // Default domain
@@ -152,11 +151,117 @@ function toAbsoluteHttpUrl(value, base = MAIN_URL) {
     if (typeof value !== 'string' || !value.trim()) return null;
     try {
         const parsed = new URL(value.trim(), base);
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+        if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') ||
+            parsed.username || parsed.password || !parsed.hostname) return null;
         return parsed.toString();
     } catch {
         return null;
     }
+}
+
+function normalizeSearchTitle(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\bseason\s*\d+\b|\bs\d{1,2}(?:e\d{1,2})?\b/gi, '')
+        .replace(/[^a-z0-9]/gi, '')
+        .toLowerCase();
+}
+
+function getExplicitReleaseYear(value) {
+    const match = String(value || '').match(/(?:\(|\[)\s*((?:19|20)\d{2})\s*(?:\)|\])/);
+    return match ? match[1] : null;
+}
+
+function titleMatchesResult(resultTitle, requestedTitle, year, mediaType, seasonNum) {
+    const candidateYear = getExplicitReleaseYear(resultTitle);
+    if (mediaType !== 'tv' && year && candidateYear && candidateYear !== String(year)) {
+        return false;
+    }
+
+    let candidateTitle = String(resultTitle || '')
+        .replace(/(?:\(|\[)\s*(?:19|20)\d{2}\s*(?:\)|\])/g, ' ');
+
+    if (mediaType === 'tv' && seasonNum !== null && seasonNum !== undefined) {
+        const seasonMatch = candidateTitle.match(/\bseason\s*(\d+)\b|\bs(\d{1,2})(?:e\d{1,2})?\b/i);
+        const resultSeason = seasonMatch && Number(seasonMatch[1] || seasonMatch[2]);
+        if (resultSeason && resultSeason !== Number(seasonNum)) return false;
+        candidateTitle = candidateTitle
+            .replace(/\bseason\s*\d+\b|\bs\d{1,2}(?:e\d{1,2})?\b/gi, ' ');
+    }
+
+    let normalizedCandidate = normalizeSearchTitle(candidateTitle);
+    const normalizedRequested = normalizeSearchTitle(requestedTitle);
+    if (normalizedCandidate !== normalizedRequested && year) {
+        const requestedYearSuffix = new RegExp(`(?:\\s|[-|])${String(year)}\\s*$`);
+        normalizedCandidate = normalizeSearchTitle(candidateTitle.replace(requestedYearSuffix, ' '));
+    }
+
+    return normalizedCandidate === normalizedRequested;
+}
+
+function selectBestMatch(searchResults, title, year, mediaType, seasonNum) {
+    return searchResults.find(result =>
+        titleMatchesResult(result.title, title, year, mediaType, seasonNum)
+    ) || null;
+}
+
+function parseSearchResults(html, baseUrl = MAIN_URL) {
+    const $ = cheerio.load(html);
+    let results = [];
+
+    $('figcaption').each((i, el) => {
+        const element = $(el);
+        const linkEl = element.find('a').first();
+        const url = linkEl.attr('href');
+        const title = linkEl.find('p').text().trim() || linkEl.text().trim();
+        const poster = element.prev('figure').find('img').attr('src') || element.parent().find('figure img').attr('src');
+        const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+        if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
+    });
+
+    if (results.length === 0) {
+        $('.thumbnail-wrapper, .thumb-wrapper, li.thumb').each((i, el) => {
+            const element = $(el);
+            const linkEl = element.find('figcaption a, a').first();
+            const url = linkEl.attr('href');
+            const title = linkEl.find('p').text().trim() || linkEl.text().trim();
+            const poster = element.find('figure img, img').first().attr('src');
+            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
+        });
+    }
+
+    if (results.length === 0) {
+        $('ul.movie-grid li.movie-card, ul#results-grid li.movie-card').each((i, el) => {
+            const element = $(el);
+            const linkEl = element.find('> a').first();
+            const url = linkEl.attr('href');
+            const title = linkEl.find('h3.movie-title').text().trim() || linkEl.find('h3').text().trim();
+            const poster = linkEl.find('img').attr('src') || linkEl.find('img').attr('data-src');
+            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
+        });
+    }
+
+    if (results.length === 0) {
+        $('article, .post, .result-item, .search-result').each((i, el) => {
+            const element = $(el);
+            const titleEl = element.find('h3 a, h2 a, .entry-title a, a.title').first();
+            const title = titleEl.text().trim() || element.find('h3, h2, .entry-title').first().text().trim();
+            const url = titleEl.attr('href') || element.find('a').first().attr('href');
+            const poster = element.find('img').first().attr('src') || element.find('img').first().attr('data-src');
+            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
+        });
+    }
+
+    const seenUrls = new Set();
+    return results.filter(result => {
+        if (seenUrls.has(result.url)) return false;
+        seenUrls.add(result.url);
+        return true;
+    });
 }
 
 // =================================================================================
@@ -627,83 +732,7 @@ async function search(query) {
     log(`[HDHub4u] Searching with URL: ${searchUrl}`);
     const response = await makeRequest(searchUrl, { headers: HEADERS, httpsAgent: agent });
     log(`[HDHub4u] Search response status: ${response.status}`);
-    const $ = cheerio.load(response.data);
-
-    // Try multiple selectors for search results
-    let results = [];
-
-    // Selector 1: WordPress figcaption layout (primary structure from curl investigation)
-    // Structure: <figure><img></figure><figcaption><a href><p>Title</p></a></figcaption>
-    $('figcaption').each((i, el) => {
-        const element = $(el);
-        const linkEl = element.find('a').first();
-        const url = linkEl.attr('href');
-        const title = linkEl.find('p').text().trim() || linkEl.text().trim();
-        // Get poster from sibling figure element
-        const poster = element.prev('figure').find('img').attr('src') || element.parent().find('figure img').attr('src');
-
-        const absoluteUrl = toAbsoluteHttpUrl(url);
-        if (title && absoluteUrl && absoluteUrl.length > 10) {
-            if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
-        }
-    });
-
-    // Selector 2: thumbnail-wrapper layout (some WordPress themes)
-    if (results.length === 0) {
-        $('.thumbnail-wrapper, .thumb-wrapper, li.thumb').each((i, el) => {
-            const element = $(el);
-            const linkEl = element.find('figcaption a, a').first();
-            const url = linkEl.attr('href');
-            const title = linkEl.find('p').text().trim() || linkEl.text().trim();
-            const poster = element.find('figure img, img').first().attr('src');
-
-            if (title && url && url.length > 10) {
-                const absoluteUrl = toAbsoluteHttpUrl(url);
-                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
-            }
-        });
-    }
-
-    // Selector 3: HDHub4u movie-grid layout (for /search.html page if it somehow works)
-    if (results.length === 0) {
-        $('ul.movie-grid li.movie-card, ul#results-grid li.movie-card').each((i, el) => {
-            const element = $(el);
-            const linkEl = element.find('> a').first();
-            const url = linkEl.attr('href');
-            const title = linkEl.find('h3.movie-title').text().trim() || linkEl.find('h3').text().trim();
-            const poster = linkEl.find('img').attr('src') || linkEl.find('img').attr('data-src');
-
-            if (title && url) {
-                const absoluteUrl = toAbsoluteHttpUrl(url);
-                if (absoluteUrl) if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
-            }
-        });
-    }
-
-    // Selector 4: Standard article-based layout
-    if (results.length === 0) {
-        $('article, .post, .result-item, .search-result').each((i, el) => {
-            const element = $(el);
-            const titleEl = element.find('h3 a, h2 a, .entry-title a, a.title').first();
-            const title = titleEl.text().trim() || element.find('h3, h2, .entry-title').first().text().trim();
-            const url = titleEl.attr('href') || element.find('a').first().attr('href');
-            const poster = element.find('img').first().attr('src') || element.find('img').first().attr('data-src');
-
-            if (title && url) {
-                const absoluteUrl = toAbsoluteHttpUrl(url);
-                if (absoluteUrl) results.push({ title, url: absoluteUrl, poster });
-            }
-        });
-    }
-
-
-    // Deduplicate by URL
-    const seenUrls = new Set();
-    results = results.filter(r => {
-        if (!r.url || seenUrls.has(r.url)) return false;
-        seenUrls.add(r.url);
-        return true;
-    });
+    const results = parseSearchResults(response.data);
 
     log(`[HDHub4u] Parsed ${results.length} search results`);
     if (results.length > 0) {
@@ -891,16 +920,19 @@ async function getDownloadLinks(mediaUrl) {
     results.forEach(res => allFinalLinks.push(...res));
 
     const seenUrls = new Set();
-    const uniqueFinalLinks = allFinalLinks.filter(link => {
-        if (link.url && (link.url.includes('.zip') || (link.name && link.name.toLowerCase().includes('.zip')))) {
-            return false;
-        }
-        if (seenUrls.has(link.url)) {
-            return false;
-        }
-        seenUrls.add(link.url);
-        return true;
-    });
+    const uniqueFinalLinks = allFinalLinks
+        .map(link => ({ ...link, url: toAbsoluteHttpUrl(link.url, mediaUrl) }))
+        .filter(link => {
+            if (!link.url) return false;
+            if (link.url.includes('.zip') || (link.name && link.name.toLowerCase().includes('.zip'))) {
+                return false;
+            }
+            if (seenUrls.has(link.url)) {
+                return false;
+            }
+            seenUrls.add(link.url);
+            return true;
+        });
 
     return { finalLinks: uniqueFinalLinks, isMovie };
 }
@@ -939,7 +971,7 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
         await fetchAndUpdateDomain();
 
         // Define cache key
-        const cacheKey = `hdhub4u_final_v2_${mediaType}_${tmdbId}${seasonNum ? `_s${seasonNum}` : ''}${episodeNum ? `_e${episodeNum}` : ''}`;
+        const cacheKey = `hdhub4u_final_v3_${mediaType}_${tmdbId}${seasonNum ? `_s${seasonNum}` : ''}${episodeNum ? `_e${episodeNum}` : ''}`;
         log(`[HDHub4u] Cache key: ${cacheKey}`);
 
         // Try to get from cache first
@@ -985,37 +1017,10 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
             log(`[HDHub4u] Search result ${index + 1}: ${result.title} - ${result.url}`);
         });
 
-        // Find best match - for TV shows, prioritize season match
-        let bestMatch = null;
-        if (mediaType === 'tv' && seasonNum) {
-            // Look for exact season match in title first
-            const seasonPattern = new RegExp(`season\\s*${seasonNum}|s${seasonNum}\\b|\\(season\\s*${seasonNum}\\)`, 'i');
-            const seasonMatches = searchResults.filter(r => seasonPattern.test(r.title));
-
-            if (seasonMatches.length > 0) {
-                log(`[HDHub4u] Found ${seasonMatches.length} results matching Season ${seasonNum}`);
-                bestMatch = seasonMatches[0];
-            } else {
-                // No exact season match, use title similarity
-                log(`[HDHub4u] No exact season match found, using title similarity`);
-                const titles = searchResults.map(r => r.title);
-                const match = findBestMatch(title.toLowerCase(), titles.map(t => t.toLowerCase()));
-                if (match.bestMatch.rating > 0.3) {
-                    bestMatch = searchResults[match.bestMatchIndex];
-                } else {
-                    bestMatch = searchResults[0];
-                }
-            }
-        } else if (searchResults.length === 1) {
-            bestMatch = searchResults[0];
-        } else {
-            const titles = searchResults.map(r => r.title);
-            const match = findBestMatch(searchQuery.toLowerCase(), titles.map(t => t.toLowerCase()));
-            if (match.bestMatch.rating > 0.3) {
-                bestMatch = searchResults[match.bestMatchIndex];
-            } else {
-                bestMatch = searchResults[0]; // Fallback to first result
-            }
+        const bestMatch = selectBestMatch(searchResults, title, year, mediaType, seasonNum);
+        if (!bestMatch) {
+            log(`[HDHub4u] No exact title/year match for "${title}" (${year || 'year unknown'}); refusing ambiguous results.`);
+            return [];
         }
 
         log(`[HDHub4u] ===== SELECTED MEDIA =====`);
@@ -1141,5 +1146,8 @@ async function getHDHub4uStreams(tmdbId, mediaType, title, year = null, seasonNu
 }
 
 module.exports = {
-    getHDHub4uStreams
+    getHDHub4uStreams,
+    parseSearchResults,
+    selectBestMatch,
+    toAbsoluteHttpUrl
 };

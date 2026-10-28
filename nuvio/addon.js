@@ -599,7 +599,8 @@ ensureStreamCacheDir().catch(err => console.error(`[Stream Cache] Error creating
 // Generate cache key for a provider's streams
 const getStreamCacheKey = (provider, type, id, seasonNum = null, episodeNum = null, region = null, cookie = null) => {
     // Basic key parts
-    let key = `streams_${provider}_${type}_${id}`;
+    const cacheProvider = String(provider).toLowerCase() === 'hdhub4u' ? 'hdhub4u_v2' : provider;
+    let key = `streams_${cacheProvider}_${type}_${id}`;
 
     // Add season/episode for TV series
     if (seasonNum !== null && episodeNum !== null) {

@@ -11,6 +11,7 @@ services:
     environment:
       PORT: "7000"
       NODE_ENV: production
+      HDHUB4U_DEBUG: "true"
     ports:
       - "${NUVIO_HOST_PORT:-17000}:7000"
     init: true
