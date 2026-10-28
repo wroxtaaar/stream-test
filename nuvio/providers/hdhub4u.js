@@ -159,6 +159,29 @@ function toAbsoluteHttpUrl(value, base = MAIN_URL) {
     }
 }
 
+function normalizeArticleUrl(value) {
+    const absoluteUrl = toAbsoluteHttpUrl(value);
+    if (!absoluteUrl) return null;
+
+    const parsed = new URL(absoluteUrl);
+    const currentUrl = new URL(MAIN_URL);
+    const hostname = parsed.hostname.toLowerCase();
+    const currentHostname = currentUrl.hostname.toLowerCase();
+    const recognizedHdhub4uSuffixes = new Set([
+        'free', 'cl', 'frl', 'com', 'fans', 'one', 'in', 'icu', 'tv', 'lol', 'link', 'pro'
+    ]);
+    const recognizedHdhub4uMatch = hostname.match(/^(?:(?:new\d+|www)\.)?hdhub4u\.([a-z0-9-]+)$/i);
+    const isRecognizedHdhub4uHost = hostname === currentHostname ||
+        Boolean(recognizedHdhub4uMatch && recognizedHdhub4uSuffixes.has(recognizedHdhub4uMatch[1].toLowerCase()));
+
+    if (isRecognizedHdhub4uHost) {
+        parsed.protocol = currentUrl.protocol;
+        parsed.host = currentUrl.host;
+    }
+
+    return parsed.toString();
+}
+
 function normalizeSearchTitle(value) {
     return String(value || '')
         .normalize('NFD')
@@ -221,7 +244,7 @@ function parseSearchResults(html, baseUrl = MAIN_URL) {
         const url = linkEl.attr('href');
         const title = linkEl.find('p').text().trim() || linkEl.text().trim();
         const poster = element.prev('figure').find('img').attr('src') || element.parent().find('figure img').attr('src');
-        const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+        const absoluteUrl = normalizeArticleUrl(toAbsoluteHttpUrl(url, baseUrl));
         if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
     });
 
@@ -232,7 +255,7 @@ function parseSearchResults(html, baseUrl = MAIN_URL) {
             const url = linkEl.attr('href');
             const title = linkEl.find('p').text().trim() || linkEl.text().trim();
             const poster = element.find('figure img, img').first().attr('src');
-            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            const absoluteUrl = normalizeArticleUrl(toAbsoluteHttpUrl(url, baseUrl));
             if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
         });
     }
@@ -244,7 +267,7 @@ function parseSearchResults(html, baseUrl = MAIN_URL) {
             const url = linkEl.attr('href');
             const title = linkEl.find('h3.movie-title').text().trim() || linkEl.find('h3').text().trim();
             const poster = linkEl.find('img').attr('src') || linkEl.find('img').attr('data-src');
-            const absoluteUrl = toAbsoluteHttpUrl(url, baseUrl);
+            const absoluteUrl = normalizeArticleUrl(toAbsoluteHttpUrl(url, baseUrl));
             if (title && absoluteUrl) results.push({ title, url: absoluteUrl, poster });
         });
     }
@@ -760,7 +783,7 @@ async function searchPingora(query) {
     return hits.map(hit => {
         const document = hit && hit.document;
         if (!document) return null;
-        const url = toAbsoluteHttpUrl(document.permalink, MAIN_URL);
+        const url = normalizeArticleUrl(document.permalink);
         const rawTitle = String(document.post_title || '').trim();
         // Keep the canonical title and explicit release year, excluding quality/audio tags.
         // This lets strict title/year matching work with full release-post titles.
@@ -1219,5 +1242,6 @@ module.exports = {
     parseSearchResults,
     selectBestMatch,
     filterLinksForEpisode,
-    toAbsoluteHttpUrl
+    toAbsoluteHttpUrl,
+    normalizeArticleUrl
 };
